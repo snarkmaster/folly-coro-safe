@@ -306,7 +306,8 @@ struct like_<Src&&> {
 
 //  mimic: like_t, p0847r0
 template <typename Src, typename Dst>
-using like_t = typename detail::like_<Src>::template apply<remove_cvref_t<Dst>>;
+using like_t =
+    typename detail::like_<Src>::template apply<std::remove_reference_t<Dst>>;
 
 //  mimic: like, p0847r0
 template <typename Src, typename Dst>

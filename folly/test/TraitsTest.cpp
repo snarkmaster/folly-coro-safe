@@ -486,6 +486,9 @@ TEST(Traits, like) {
   EXPECT_TRUE(
       (std::is_same<like_t<int const volatile&&, char>, char const volatile&&>::
            value));
+  // Check we don't strip underlying `const` from `Dst`
+  static_assert(std::is_same_v<like_t<int, const char>, const char>);
+  static_assert(std::is_same_v<like_t<int, const char&>, const char>);
 }
 
 #if defined(__cpp_concepts)

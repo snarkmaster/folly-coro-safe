@@ -671,10 +671,17 @@ struct invoke_first_match : private Invoker... {
  *  * Since C++20 only, lambda definitions may appear in an unevaluated context,
  *    namely, in an operand to decltype, noexcept, sizeof, or typeid.
  */
-#define FOLLY_INVOKE_MEMBER(membername)                                                      \
-  [](auto&& __folly_param_o, auto&&... __folly_param_a) constexpr FOLLY_DETAIL_FORWARD_BODY( \
-      FOLLY_DETAIL_FORWARD_REF(__folly_param_o)                                              \
-          .membername(FOLLY_DETAIL_FORWARD_REF(__folly_param_a)...))
+#define FOLLY_INVOKE_MEMBER(membername)                                                                              \
+  ([] {                                                                                                              \
+    struct                                                                                                           \
+        : public decltype([](auto&& __folly_param_o, auto&&... __folly_param_a) constexpr FOLLY_DETAIL_FORWARD_BODY( \
+              FOLLY_DETAIL_FORWARD_REF(__folly_param_o)                                                              \
+                  .membername(                                                                                       \
+                      FOLLY_DETAIL_FORWARD_REF(__folly_param_a)...))) {                                              \
+      using made_via_folly_invoke_member = void;                                                                     \
+    } membername##_wrapped;                                                                                          \
+    return membername##_wrapped;                                                                                     \
+  }())
 
 /***
  *  FOLLY_CREATE_STATIC_MEMBER_INVOKER
