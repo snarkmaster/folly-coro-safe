@@ -178,10 +178,10 @@ ClosureTask<std::string> funcTemplate(auto hi) {
 }
 
 CO_TEST(AsyncClosure, callFuncTemplate) {
-  // I'm not sure how to deduce the first arg of `funcTemplate` without an
-  // intermediate lambda, or an explicit type signature as in `func()`.
   auto res = co_await asyncClosureCheckType<ValueTask<std::string>>(
-      [](auto hi) { return funcTemplate(std::move(hi)); },
+      // As of 2024, C++ lacks an "overload set" type, and thus can't
+      // directly deduce `funcTemplate` (see P3360R0 pr P3312R0).
+      FOLLY_INVOKE_QUAL(funcTemplate),
       as_capture(make_in_place<std::string>("hi")));
   EXPECT_EQ("hide-and-seek", res);
 }
@@ -566,3 +566,30 @@ XXX also, can combine pos & kw (pos1, pos2, "x"_id=4, "y"_id=5)
     trailing scope
 
 */
+
+TEST(AsyncClosure, nonSafeTaskIsNotAwaited) {
+  bool awaited = false;
+  auto lambda = [&]() -> Task<void> {
+    awaited = true;
+    co_return;
+  };
+  // We can't `release_outer_coro()` on either since they have a
+  // `static_assert` -- but `checkIsUnsafe` above checks the logic.
+  folly::coro::detail::bind_captures_to_closure</*force outer*/ false>(lambda);
+  folly::coro::detail::bind_captures_to_closure</*force outer*/ true>(lambda);
+  EXPECT_FALSE(awaited);
+}
+
+struct HasMemberTask {
+  MemberTask<int> task(auto x) { co_return 1300 + x; }
+};
+
+CO_TEST(AsyncClosure, memberTask) {
+  EXPECT_EQ(
+      1337,
+      co_await async_closure(
+          [](auto mt) -> ClosureTask<int> {
+            co_return co_await async_closure(FOLLY_INVOKE_MEMBER(task), mt, 37);
+          },
+          as_capture(HasMemberTask{})));
+}

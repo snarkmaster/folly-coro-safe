@@ -31,7 +31,7 @@ the major cause of memory-safety bugs in C++, but is also essential for
 writing correct & performant C++ programs.  Fortunately,
   - Much business logic can be written in a pure-functional style, where
     only value semantics are allowed.  Such code is easier to understand,
-    ans has much better memory-safety.
+    and has much better memory-safety.
   - When references ARE used, the most common scenario is passing a
     reference from a parent lexical scope to descendant scopes.
 
@@ -39,7 +39,7 @@ writing correct & performant C++ programs.  Fortunately,
 memory-safe in the above settings.  The `safe_alias` enum shows a hierarchy
 of memory safety, but you only need to know about two:
   - `unsafe` -- e.g. raw pointers or references, and
-  - `maybe_value` -- e.g. `std::pair<int, char>` or `std::unique_ptr<Foo>`.
+  - `maybe_value` -- `int`, `std::pair<int, char>`, or `std::unique_ptr<Foo>`.
 
 A user can easily bypass the heuristic -- since C++ lacks full reflection,
 it is impossible to make this bulletproof.  Our goals are much more modest:
@@ -47,13 +47,25 @@ it is impossible to make this bulletproof.  Our goals are much more modest:
   - Encourage programmers to use safe semantics by default.
 
 The BIG CAVEATS are:
- - Aliases hidden in structures: We can't see unsafe class members.
+ - Aliases hidden in structures: We can't see unsafe class members, so
+   `UnsafeStruct` below will be deduced to have `maybe_value` safety unless
+   you specialize `safe_alias_for_<UnsafeStruct>`.
+     struct UnsafeStruct { int* rawPtr; };
  - The "callable hole": If an ancestor scope passes a callable to a child,
    we can't inspect the callable's arg, and so the child can easily pass a
-   soon-to-be-dangling reference back to the parent.
+   soon-to-be-dangling reference back to the parent. E.g. this compiles:
+       int* badPtr;
+       async_closure(
+         [](auto fn) -> ClosureTask<void> {
+           int i = 5;
+           fn(i);
+           co_return;
+         },
+         // We can't tell this callable is unsafe!
+         [&](int* p) { badPtr = p; });
 
-If you need to bypass this control, please prefer the `manual_safe_*` wrappers
-below, instead of using a custom workaround.  Always explain why it's safe.
+If you need to bypass this control, prefer the `manual_safe_*` wrappers
+below, instead of writing a custom workaround.  Always explain why it's safe.
 
 You can teach `safe_alias_of_v` about your type by specializing
 `folly::detail::safe_alias_for_`, as seen below.  Best practices:

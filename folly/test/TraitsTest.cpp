@@ -465,27 +465,51 @@ TEST(Traits, removeCvref) {
       (std::is_same<remove_cvref<int volatile const&&>::type, int>::value));
 }
 
+TEST(Traits, copy_cvref) {
+  static_assert(std::is_same<copy_cvref_t<int, char>, char>::value);
+  static_assert(std::is_same<copy_cvref_t<int const, char>, char const>::value);
+  static_assert(
+      std::is_same<copy_cvref_t<int volatile, char>, char volatile>::value);
+  static_assert(std::is_same<
+                copy_cvref_t<int const volatile, char>,
+                char const volatile>::value);
+  static_assert(std::is_same<copy_cvref_t<int&, char>, char&>::value);
+  static_assert(
+      std::is_same<copy_cvref_t<int const&, char>, char const&>::value);
+  static_assert(
+      std::is_same<copy_cvref_t<int volatile&, char>, char volatile&>::value);
+  static_assert(std::is_same<
+                copy_cvref_t<int const volatile&, char>,
+                char const volatile&>::value);
+  static_assert(std::is_same<copy_cvref_t<int&&, char>, char&&>::value);
+  static_assert(
+      std::is_same<copy_cvref_t<int const&&, char>, char const&&>::value);
+  static_assert(
+      std::is_same<copy_cvref_t<int volatile&&, char>, char volatile&&>::value);
+  static_assert(std::is_same<
+                copy_cvref_t<int const volatile&&, char>,
+                char const volatile&&>::value);
+}
+
 TEST(Traits, like) {
-  EXPECT_TRUE((std::is_same<like_t<int, char>, char>::value));
-  EXPECT_TRUE((std::is_same<like_t<int const, char>, char const>::value));
-  EXPECT_TRUE((std::is_same<like_t<int volatile, char>, char volatile>::value));
-  EXPECT_TRUE(
-      (std::is_same<like_t<int const volatile, char>, char const volatile>::
-           value));
-  EXPECT_TRUE((std::is_same<like_t<int&, char>, char&>::value));
-  EXPECT_TRUE((std::is_same<like_t<int const&, char>, char const&>::value));
-  EXPECT_TRUE(
-      (std::is_same<like_t<int volatile&, char>, char volatile&>::value));
-  EXPECT_TRUE(
-      (std::is_same<like_t<int const volatile&, char>, char const volatile&>::
-           value));
-  EXPECT_TRUE((std::is_same<like_t<int&&, char>, char&&>::value));
-  EXPECT_TRUE((std::is_same<like_t<int const&&, char>, char const&&>::value));
-  EXPECT_TRUE(
-      (std::is_same<like_t<int volatile&&, char>, char volatile&&>::value));
-  EXPECT_TRUE(
-      (std::is_same<like_t<int const volatile&&, char>, char const volatile&&>::
-           value));
+  static_assert(std::is_same<like_t<int, char>, char>::value);
+  static_assert(std::is_same<like_t<int const, char>, char const>::value);
+  static_assert(std::is_same<like_t<int volatile, char>, char>::value);
+  static_assert(
+      std::is_same<like_t<int const, char volatile>, char const volatile>::
+          value);
+  static_assert(std::is_same<like_t<int&, char>, char&>::value);
+  static_assert(std::is_same<like_t<int const&, char>, char const&>::value);
+  static_assert(std::is_same<like_t<int volatile&, char>, char&>::value);
+  static_assert(
+      std::is_same<like_t<int const&, char volatile>, char const volatile&>::
+          value);
+  static_assert(std::is_same<like_t<int&&, char>, char&&>::value);
+  static_assert(std::is_same<like_t<int const&&, char>, char const&&>::value);
+  static_assert(std::is_same<like_t<int volatile&&, char>, char&&>::value);
+  static_assert(
+      std::is_same<like_t<int const&&, char volatile>, char const volatile&&>::
+          value);
   // Check we don't strip underlying `const` from `Dst`
   static_assert(std::is_same_v<like_t<int, const char>, const char>);
   static_assert(std::is_same_v<like_t<int, const char&>, const char>);

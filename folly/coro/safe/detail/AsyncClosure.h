@@ -265,9 +265,10 @@ class async_closure_wrap_coro {
     // KEEP IN SYNC with `is_safe`.
     static_assert(
         has_safe_args,
-        "Args passed into `async_closure` must have `safe_alias_of_v` of at least "
-        "`shared_cleanup`. Use `manual_safe_*` to work around this, and comment "
-        "with a proof of why your usage is memory-safe.");
+        "Args passed into `async_closure` must have `safe_alias_of_v` of at "
+        "least `shared_cleanup`. `NowTask` does not have this constraint. If "
+        "you naeed a closure, use `manual_safe_*` to work around this, and "
+        "comment with a proof of why your usage is memory-safe.");
     static_assert(
         is_inner_coro_safe,
         "`async_closure` currently only supports `SafeTask` as the inner coro.");
@@ -409,9 +410,9 @@ auto bind_captures_to_closure(auto make_inner_coro, auto&&... args) {
           },
           b_tup));
 
-  constexpr bool isInvokeMember = requires {
-    typename decltype(make_inner_coro)::made_via_folly_invoke_member;
-  };
+  constexpr bool isInvokeMember = is_instantiation_of_v<
+      invoke_member_wrapper_fn,
+      decltype(make_inner_coro)>;
   auto inner_coro = std::apply(
       [&]<typename... Bs>(Bs&... bs) {
         return [&]<size_t... ArgIs, size_t... StorageIs>(
@@ -420,13 +421,19 @@ auto bind_captures_to_closure(auto make_inner_coro, auto&&... args) {
               // Unpack `Bs`, `ArgIs`, and `StorageIs` jointly
               [&]() -> decltype(auto) {
                 if constexpr (isInvokeMember && ArgIs == 0) {
-                  // XXX explain
-
-                  // XXX do I need to assert the safety of the first arg? how?
+                  // We have a `FOLLY_INVOKE_MEMBER`.  It accesses the
+                  // member function via `.`, but this arg is expected to be
+                  // `co_cleanup_capture<>` or `AsyncObjectPtr<>`, so we
+                  // "magically" dereference it here.
                   //
-                  // This assertion is important for safety: `MemberTask`
-                  // doesn't validate the safety of its first argument (the
-                  // implicit object argument), so we must
+                  // On safety: Below, we assert that it it made a
+                  // `MemberTask<T>`, which `inner_rewrapped` will
+                  // implicitly unwrap & mark with a higher safety level.
+                  // `MemberTask` provides only a minimal safety
+                  // attestation, namely (besides arg 1, the implicit object
+                  // param), none of its args are taken by-reference.  This
+                  // is fine, since for `OuterSafety`, we will have
+                  // accounted for all the args' safety levels.
                   return *async_closure_bind_inner_coro_arg<StorageIs, Bs>(
                       capture_private_t{}, bs, storage_ptr);
                 } else {
@@ -464,10 +471,8 @@ auto bind_captures_to_closure(auto make_inner_coro, auto&&... args) {
       // safety based only on the non-storage arguments.
       return std::move(inner_coro).template withNewSafety<newSafety>();
     } else {
-      // Not a `SafeTask`, `release_outer_coro()` will fail
-      // XXX have something like
-      // return []() -> Task<NeverActuallyAwaited> { co_return {}; };
-      //      static_assert(std::is_void_v<decltype(inner_coro)>); // XXX
+      // This is a `SafeTask`, `release_outer_coro()` will fail.
+      // Tests covering this: `checkIsUnsafe` and `nonSafeTaskIsNotAwaited`
       return std::move(inner_coro);
     }
   }();

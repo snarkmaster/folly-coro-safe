@@ -1,4 +1,4 @@
-# Start here
+## Start here
 
 This document is for anyone who writes significant amounts of asynchronous
 code using `folly::coro`, and *especially* for people whose use-case does
@@ -19,7 +19,7 @@ You may ignore references to edge-case tools like `co_invoke` or
 `co_scope_exit` -- these are mentioned by way of comparison, but this
 document argues you should avoid them in favor of `coro/safe` APIs.
 
-# Problems solved (and not solved)
+## Problems solved (and not solved)
 
 Straight-up structured concurrency is almost as "safe" as regular C++, with
 some new risks relating to multi-threading, e.g.
@@ -51,13 +51,15 @@ https://github.com/CppCon/CppCon2023/blob/main/Presentations/coroutine_patterns.
 While the talk recommends `co_invoke` and a manually-invoked `cleanup()`
 member coro, you will see that `coro/safe` offers more robust solutions.
 
-# How does it work?
+## How does it work?
 
-(1) When you use `coro/safe` constructs, you end up telling the compiler --
-through the type system -- a fairly precise lifetime contract for the
-objects you are referencing (details in `SafeAlias.h` and `Captures.h`).  As
-a result, many common lifetime bugs become compiler errors.  Briefly,
-when you intact with "safe" tasks like `async_closure` and friends:
+### Compile-time reference safety
+
+When you use `coro/safe` constructs, you end up telling the compiler -- through
+the type system -- a fairly precise lifetime contract for the objects you are
+referencing (details in `SafeAlias.h` and `Captures.h`).  As a result, many
+common lifetime bugs become compiler errors.  Briefly, when you intact with
+"safe" tasks like `async_closure` and friends:
   - Value types like `int` maybe passed everywhere without restriction.
   - Child coros can refer to data owned by parent closures via wrapper
     classes from `Captures.h`.  While there's a zoo of `capture` sub-types,
@@ -77,9 +79,12 @@ when you intact with "safe" tasks like `async_closure` and friends:
     safe, wrap a value in `manual_safe_ref*` for a simple escape hatch.
     **Always** add a comment explaining why it's safe!
 
-(2) `coro/safe` constructs like `async_closure()` and `AsyncObject` provide
-a strong form of async RAII:
-  - `co_cleanup(async_closure_private_t)` is guranteed to be invoked.
+### Async RAII
+
+`coro/safe` constructs like `async_closure()` and `AsyncObject` provide a strong
+form of async RAII:
+  - `co_cleanup(async_closure_private_t)` is guranteed to be invoked. Details in
+    `CoCleanupAsyncRAII.md`.
   - Cleanup invocation is exception-safe, handling both errors in the "inner
     scope" and from sibling data with `co_cleanup`.
   - Both "closure body" and "cleanup" exceptions propagate to the caller.
@@ -95,7 +100,9 @@ a strong form of async RAII:
   - You can return closure-owned data outside of the closure via
     `AfterCleanup.h`.
 
-(3) `SafeAsyncScope.h` addresses all the major problems with `AsyncScope`:
+### Safer background tasks via `SafeAsyncScope`
+
+`SafeAsyncScope.h` addresses all the major problems with `AsyncScope`:
   - Auto-join & exception-safety via `co_cleanup` async RAII.
   - Refs taken by background tasks are lifetime-safe due to `SafeAlias.h`.
   - `AsyncScopeObject.h` helps avoid the following commmon, deadlock-prone
@@ -108,7 +115,7 @@ a strong form of async RAII:
     memory-safe APIs `scheduleScopeClosure()` and (for `AsyncObject`s)
     `scheduleSelfClosure()`.
 
-# `coro/safe` cheat sheet
+## `coro/safe` cheat sheet
 
 All the familiar `folly::coro` concepts will continue to apply, but a few
 things need to be expressed differently.
@@ -117,13 +124,16 @@ things need to be expressed differently.
     `AutoSafeTask`, `NowTask`.  Yes, this is a mouthful, and you will want
     to review `APIBestPractices.md` to understand the various use-cases.
     However, basic usage is simple:
-      * Free or `static` functions - use `ClosureTask`.
-      * Member function -- use `MemberTask`.
-      * Optionally, wrap either kind with `as_async_closure` in an API
-        prefixed with `ac_` to avoid `async_closure()` at each callsite.
+      - Immediately awaited tasks: `NowTask`
+      - Tasks taking only value-semantic args: `ValueTask`
+      - Tasks to be wrapped by async closures:
+          * Free or `static` functions - use `ClosureTask`.
+          * Member function -- use `MemberTask`.
+          * Optionally, wrap either kind with `as_async_closure` in an API
+            prefixed with `ac_` to avoid `async_closure()` at each callsite.
 
-  * `co_invoke`, `co_scope_exit`, lambda coros -> use `async_closure()`,
-    documented in `AsyncClosure.h`.
+  * `co_invoke`, `co_scope_exit`, lambda coros, async RAII -> instead, use
+    `async_closure()`, documented in `AsyncClosure.md`.
       - Avoid `co_scope_exit` because `async_closure()` is a safer analog
         has strictly more functionality.  The big problem with
         `co_scope_exit` is it violates RAII expectations -- its async
@@ -136,14 +146,15 @@ things need to be expressed differently.
         check out `async_named_closure()` in "Future work".
 
   * For `AsyncScope` in a function, pass `safeAsyncScope<...>()` to
-    your `async_closure()`.
+    an `async_closure()`.
 
   * Classes needing an `AsyncScope` member for background tasks --
-    inherit `public`ly from `AsyncScopeObject<...>` (
+    inherit `public`ly from `AsyncScopeObject<...>`.
 
-  * Classes needing async destructors (typically, a mandatory `Task<>
-    cleanup()`) -> `public`ly inherit from `AsyncObject`. (power users:
-    `AsyncScopeSlotObject`)
+  * Classes needing async destructors: `public`ly inherit from `AsyncObject`.
+
+    Power users may want `AsyncScopeSlotObject`, or, in rare cases,
+    to manually implement `co_cleanup()` -- read `CoCleanupAsyncRAII.md` first.
 
 # Just show me some code!
 
@@ -186,7 +197,7 @@ value.  Luckily, this is easy to resolve by adding a keyword argument
 syntax.  I have some WIP diffs for this, but it would take some focused work
 to really polish it off:
 
-```
+```cpp
 co_await async_named_closure(
     [](auto scope, auto kw) {
       scope.with(co_await co_current_executor).schedule(async_closure(

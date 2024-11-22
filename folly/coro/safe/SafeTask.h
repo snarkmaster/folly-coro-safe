@@ -25,15 +25,19 @@ namespace folly::coro {
 /// Typically, you will not use `SafeTask` directly.  Instead, choose one of
 /// the type-aliases below, following `APIBestPractices.md` guidance.  Briefly:
 ///   - `ValueTask`: Use if your coro only takes value-semantic args.
+///   - `MemberTask`: Use for all non-static member functions.  Can be
+///     awaited immediately (like `NowTask`), or wrapped in an
+///     `async_closure()` to support less-structured concurrency --
+///     including scheduling on a background scope belonging to the object.
 ///   - `ClosureTask`: Use if your coro is wrapped by `as_async_closure()` or
 ///     otherwise called via `async_closure()`.
-///   - XXX MemberTask
 ///   - `CoCleanupSafeTask`: Use for tasks that can be directly scheduled on a
 ///     `SafeAsyncScope`.
-///   - `NowTask`: All other coros.  These must be awaited in the expression
-///     that created them, greatly increasing safety.
-///   - `AutoSafeTask`: Generic coros where you need the argument & return
-///     types to choose between the above.
+///   - (not in `SafeTask.h`) `NowTask`: All other coros.  This requires the
+///     task to always be awaited in the expression that created it,
+///     eliminating a variety of common dangling reference bugs.
+///   - `AutoSafeTask`: Generic coros where you want the argument & return
+///     types to automatically branch between a `NowTask` and a `SafeTask`.
 ///
 /// `SafeTask` is a thin wrapper around `folly::coro::Task` that uses
 /// `safe_alias_of_v` to enforce some compile-time guarantees:
@@ -338,7 +342,8 @@ class FOLLY_CORO_TASK_ATTRS SafeTask final
 } // namespace folly::coro
 
 template <folly::safe_alias ArgSafety, typename T, typename... Args>
-struct std::coroutine_traits<folly::coro::SafeTask<ArgSafety, T>, Args...> {
+struct folly::coro::
+    coroutine_traits<folly::coro::SafeTask<ArgSafety, T>, Args...> {
   // UGH: Pass `Args...` into `SafeTaskPromise` because at this point, the
   // coroutine function is still an incomplete type, and can't be validated.
   using promise_type =

@@ -107,6 +107,10 @@ class AsyncObjectSlotTag;
 /// As elsewhere, a less-safe reference passed into your object would not
 /// necessarily be alive at the time of your object's async cleanup.
 ///
+/// XXX Consequences of `ptr->slotName_(ptr)`:
+///     - Only static funcs taking `me` can access slots now.
+///     - XXX fix error messages for unsupported `ptr` types, document this.
+///
 /// ## Async cleanup
 ///
 /// You can implement a combination of these patterns, from best to worst:
