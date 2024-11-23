@@ -27,6 +27,12 @@ some new risks relating to multi-threading, e.g.
   - Deadlock due to a blocking wait on a thread that must suspend in order
     to complete the awaited task (e.g. blocking wait in a destructor).
 
+To enforce pure structured concurrency in your code, `folly/coro/safe` encourages you to replace `Task` with these zero-cost wrappers:
+  - `NowTask`: non-movable, only awaitable in the statement that made it, or
+  - `ValueTask`: task is self-contained, contains no references to external data.
+
+For more complex usage, read on.
+
 At present, `coro/safe` does **not** attempt to improve thread- or
 deadlock-safety, and focuses instead on memory-safety, exception-safety, and
 cancellation-correctness.
@@ -53,14 +59,14 @@ member coro, you will see that `coro/safe` offers more robust solutions.
 
 ## How does it work?
 
-### Compile-time reference safety
+### Compile-time memory safety
 
 When you use `coro/safe` constructs, you end up telling the compiler -- through
 the type system -- a fairly precise lifetime contract for the objects you are
 referencing (details in `SafeAlias.h` and `Captures.h`).  As a result, many
 common lifetime bugs become compiler errors.  Briefly, when you intact with
 "safe" tasks like `async_closure` and friends:
-  - Value types like `int` maybe passed everywhere without restriction.
+  - Value types like `int` may be passed everywhere without restriction.
   - Child coros can refer to data owned by parent closures via wrapper
     classes from `Captures.h`.  While there's a zoo of `capture` sub-types,
     in typical usage, you should take them by `auto`.  They can wrap value &
@@ -81,9 +87,17 @@ common lifetime bugs become compiler errors.  Briefly, when you intact with
 
 ### Async RAII
 
-`coro/safe` constructs like `async_closure()` and `AsyncObject` provide a strong
-form of async RAII:
-  - `co_cleanup(async_closure_private_t)` is guranteed to be invoked. Details in
+As of 2024, C++ does not allow `co_await` in `catch` blocks or destructors, so
+there's no great way to guarantee async cleanup as the scope exits. This, in
+turn, makes it extremely hard to [write exception-safe async
+code](examples/CollectAllWindowedAsync.cpp). The pre-existing `co_scope_exit`
+helps, but its API is clumsy and encourages memory-safety bugs.
+
+`coro/safe` constructs like [`async_closure()`](AsyncClosure.md) and
+`AsyncObject` provide a strong form of async RAII:
+  - Most users will be happy with `SafeAsyncScope.h` for async cleanup. For
+    library authors, the `co_cleanup(async_closure_private_t)` method is
+    guranteed to be invoked, subject to minor caveats. Details in
     `CoCleanupAsyncRAII.md`.
   - Cleanup invocation is exception-safe, handling both errors in the "inner
     scope" and from sibling data with `co_cleanup`.
@@ -92,11 +106,11 @@ form of async RAII:
     arbitrarily.  Currently (this is not a contract), any "inner" error
     takes priority over "cleanup" ones, since it's more likely to be the
     root cause.
-  - Unlike synchronous RAII, cleanup of sibling object is currently unordered,
+  - Unlike synchronous RAII, cleanup of sibling objects is currently unordered,
     to potentially later support concurrent cleanup of unrelated objects.
-  - The RAII implementation integrates with `SafeAlias.h` type annotations
-    to ensure that `co_cleanup` calls do not access the data belonging to
-    siblings with `co_cleanup` -- they could have been cleaned up.
+  - The RAII implementation integrates with `SafeAlias.h` type annotations to
+    ensure that `co_cleanup` calls cannot access the data belonging to siblings
+    with `co_cleanup` -- those could have been cleaned up.
   - You can return closure-owned data outside of the closure via
     `AfterCleanup.h`.
 
@@ -156,7 +170,7 @@ things need to be expressed differently.
     Power users may want `AsyncScopeSlotObject`, or, in rare cases,
     to manually implement `co_cleanup()` -- read `CoCleanupAsyncRAII.md` first.
 
-# Just show me some code!
+## Just show me some code!
 
 Start with `folly/coro/safe/examples/CollectAllWindowedAsync.cpp`, which
 demonstrates how a real-world scatter-gather utility becomes safe & legible
@@ -165,73 +179,16 @@ once migrated to `coro/safe` APIs.
 The test `FooOnScope` in `AsyncScopeObjectTest.cpp` showcases a variety of
 ways of scheduling background tasks from class member coros.
 
-# Future work & contributions
+## But I need "Feature X"!
 
-Please discuss your contribution with Github user @snarkmaster. When
-extending `coro/safe`, it is important to maintain some core invariants, and
-this can require careful thought and code review. Some specific points:
+Please review `FutureWork.md`, and reach out to the author to discuss your idea.
 
-  - We want to guarantee that any type needing an async destructor can
-    **only** be created in a managed setting (i.e. `as_capture` or
-    as an `AsyncObject::Slot`). Failing to enforce this constraint would
-    break our core promise of "guaranteed async cleanup".
+## Why do you mix `underscore_separated` and `camelCase`?
 
-  - It requires attentive analysis of a use-case to define effective
-    `SafeAlias.h` markings and `capture`-like pointers for new scenarios
-    like `AsyncGenerator`.  For example -- arguments passed **into** a
-    "safe" variant of generator should follow `async_closure` rules.  But,
-    we'll need to think carefully about yielding references **from**
-    generators, and having `co_yield` references return a reference **into**
-    the generator (supported in Python, but not yet in `folly::coro`).
+This split-brain situation is a side effect of the `folly` team trying to move certain vocabulary types from the broadly-accepted `camelCase` to the more `std`-friendly `underscore_separated`. For example, `folly::coro` has both `blockingWait` (85% of callsites) and `blocking_wait` (intended future?).
 
-With that said, here are the things that we want to add:
+As a result, identifiers in domains that were "more like camelcase libraries" stayed camelcase (`AsyncScope` -> `SafeAsyncScope`). While things that maybe looked more like `std` or core `folly::coro` vocabulary types became underscore-separated (i.e. `make_in_place`, `as_capture`, `async_closure`).
 
-**Generators:** The largest feature gap of `coro/safe` is that it lacks
-extensions for `AsyncGenerator`.  Integrating this would be a finite,
-well-defined project that **should** be built, given an impactful use-case.
-Be sure to grep for breadcrumbs in the code.
-
-**`async_named_closure`:** Since `async_closure()` deliberately disallows
-lambda captures, it has a usability gap when passing many arguments by
-value.  Luckily, this is easy to resolve by adding a keyword argument
-syntax.  I have some WIP diffs for this, but it would take some focused work
-to really polish it off:
-
-```cpp
-co_await async_named_closure(
-    [](auto scope, auto kw) {
-      scope.with(co_await co_current_executor).schedule(async_closure(
-          [](auto kw2) {
-            kw2["a"_id].fetch_add(kw["b"_id]);
-            co_return;
-          },
-          kw));
-      // NB: When adding `after_cleanup`, consider `co_after_cleanup` too.
-      // Both would have `async_closure` argument semantics ...  and at
-      // least the latter could perhaps even own its own `capture`s.
-      // Also, the ideal syntax for this might be `.then()` or `operator|`
-      // chaining of closure-like gadgets, with the `co_return` or `return`
-      // of one being plumbed into the arguments of the next.
-      co_return after_cleanup(
-          [](auto kw2) { return kw2["a"_id].load(); },
-          kw);
-    },
-    safeAsyncScope<CancelViaClosure>(),
-    // Like in Python, kwargs must follow positional args, and are collected
-    // into a single `auto kw` above.
-    "a"_id = as_capture(make_in_place<std::atomic_int>(3)),
-    "b"_id = 3);
-```
-
-**`restricted_co_cleanup_capture`:** Your will find mentions of "restricted"
-`capture`s throughout the codebase.  That's an already-designed &
-simple-to-implement feature meant to address a particular quirk of the
-`capture` safety system.  Specifically, today, when you pass
-`async_arc_cleanup<T&>` into a closure, this forces the data owned by the
-closure to have weaker memory-safety markings.  That prevents the inner
-closure from passing a reference to something it owns into a task scheduled
-on the outer closure's scope (or other "cleanup" arg).  If you find yourself
-inconvenienced by this quirk, it is likely that implementing restricted refs
-can help -- a closure is unaffected when a restricted ref is passed into it,
-and the restricted refs can still be used to schedule `ValueTask`s on the
-corresponding scope / `co_cleanup` object.
+The original author is personally not a fan of this confusing state, and would welcome encouragement to either:
+  - Standardize all APIs on the more prevalent `camelCase`, or
+  - Introduce a *very* obvious guideline for which style applies when.

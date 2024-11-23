@@ -15,9 +15,13 @@ A couple of "standard modern C++ linters" are assumed to be active:
 
 ### Safety type-system: `SafeTask`, `safe_alias_of_v`, `capture`, etc
 
+  - (hi-pri, moderate) Auto-replace instances of `Task` by `NowTask` or
+    `ValueTask` whenever possible.
+
   - (hi-pri, complex) Detects when you pass a type into `SafeTask`,
     `async_closure`, or similar, but `safe_alias_v` for that type is not
-    (recursively) correct.  This would drive annotations for:
+    (recursively) correct. Offer efficient auto-correct.  This would drive
+    annotations for:
       * User types that contain unsafe, or limited-safety aliasing
       * Common generic containers
     The big caveat is that supporting each generic container will require
