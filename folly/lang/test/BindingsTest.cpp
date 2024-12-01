@@ -17,6 +17,8 @@
 #include <folly/lang/Bindings.h>
 #include <folly/portability/GTest.h>
 
+#ifndef _WIN32 // Explained in `Bindings.h`
+
 using namespace folly::bindings;
 using namespace folly::bindings::detail;
 
@@ -341,3 +343,5 @@ static_assert(
     std::is_same_v<
         typename first_policy<decltype(constant(by_ref(5)))>::signature_type,
         const int&&>);
+
+#endif

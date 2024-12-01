@@ -18,6 +18,8 @@
 
 #include <folly/coro/safe/detail/AsyncClosure.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 namespace folly::coro {
 
 /// This is a brief summary.  Before writing critical code, please also get
@@ -104,3 +106,5 @@ constexpr auto async_closure_force_outer_coro(
 }
 
 } // namespace folly::coro
+
+#endif

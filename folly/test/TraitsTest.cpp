@@ -466,50 +466,49 @@ TEST(Traits, removeCvref) {
 }
 
 TEST(Traits, copy_cvref) {
-  static_assert(std::is_same<copy_cvref_t<int, char>, char>::value);
-  static_assert(std::is_same<copy_cvref_t<int const, char>, char const>::value);
+  static_assert(std::is_same_v<copy_cvref_t<int, char>, char>);
+  static_assert(std::is_same_v<copy_cvref_t<int const, char>, char const>);
   static_assert(
-      std::is_same<copy_cvref_t<int volatile, char>, char volatile>::value);
-  static_assert(std::is_same<
-                copy_cvref_t<int const volatile, char>,
-                char const volatile>::value);
-  static_assert(std::is_same<copy_cvref_t<int&, char>, char&>::value);
+      std::is_same_v<copy_cvref_t<int volatile, char>, char volatile>);
+  static_assert( //
+      std::is_same_v<
+          copy_cvref_t<int const volatile, char>,
+          char const volatile>);
+  static_assert(std::is_same_v<copy_cvref_t<int&, char>, char&>);
+  static_assert(std::is_same_v<copy_cvref_t<int const&, char>, char const&>);
   static_assert(
-      std::is_same<copy_cvref_t<int const&, char>, char const&>::value);
+      std::is_same_v<copy_cvref_t<int volatile&, char>, char volatile&>);
+  static_assert( //
+      std::is_same_v<
+          copy_cvref_t<int const volatile&, char>,
+          char const volatile&>);
+  static_assert(std::is_same_v<copy_cvref_t<int&&, char>, char&&>);
+  static_assert(std::is_same_v<copy_cvref_t<int const&&, char>, char const&&>);
   static_assert(
-      std::is_same<copy_cvref_t<int volatile&, char>, char volatile&>::value);
-  static_assert(std::is_same<
-                copy_cvref_t<int const volatile&, char>,
-                char const volatile&>::value);
-  static_assert(std::is_same<copy_cvref_t<int&&, char>, char&&>::value);
-  static_assert(
-      std::is_same<copy_cvref_t<int const&&, char>, char const&&>::value);
-  static_assert(
-      std::is_same<copy_cvref_t<int volatile&&, char>, char volatile&&>::value);
-  static_assert(std::is_same<
-                copy_cvref_t<int const volatile&&, char>,
-                char const volatile&&>::value);
+      std::is_same_v<copy_cvref_t<int volatile&&, char>, char volatile&&>);
+  static_assert( //
+      std::is_same_v<
+          copy_cvref_t<int const volatile&&, char>,
+          char const volatile&&>);
 }
 
 TEST(Traits, like) {
-  static_assert(std::is_same<like_t<int, char>, char>::value);
-  static_assert(std::is_same<like_t<int const, char>, char const>::value);
-  static_assert(std::is_same<like_t<int volatile, char>, char>::value);
+  static_assert(std::is_same_v<like_t<int, char>, char>);
+  static_assert(std::is_same_v<like_t<int const, char>, char const>);
+  static_assert(std::is_same_v<like_t<int volatile, char>, char>);
   static_assert(
-      std::is_same<like_t<int const, char volatile>, char const volatile>::
-          value);
-  static_assert(std::is_same<like_t<int&, char>, char&>::value);
-  static_assert(std::is_same<like_t<int const&, char>, char const&>::value);
-  static_assert(std::is_same<like_t<int volatile&, char>, char&>::value);
+      std::is_same_v<like_t<int const, char volatile>, char const volatile>);
+  static_assert(std::is_same_v<like_t<int&, char>, char&>);
+  static_assert(std::is_same_v<like_t<int const&, char>, char const&>);
+  static_assert(std::is_same_v<like_t<int volatile&, char>, char&>);
   static_assert(
-      std::is_same<like_t<int const&, char volatile>, char const volatile&>::
-          value);
-  static_assert(std::is_same<like_t<int&&, char>, char&&>::value);
-  static_assert(std::is_same<like_t<int const&&, char>, char const&&>::value);
-  static_assert(std::is_same<like_t<int volatile&&, char>, char&&>::value);
+      std::is_same_v<like_t<int const&, char volatile>, char const volatile&>);
+  static_assert(std::is_same_v<like_t<int&&, char>, char&&>);
+  static_assert(std::is_same_v<like_t<int const&&, char>, char const&&>);
+  static_assert(std::is_same_v<like_t<int volatile&&, char>, char&&>);
   static_assert(
-      std::is_same<like_t<int const&&, char volatile>, char const volatile&&>::
-          value);
+      std::
+          is_same_v<like_t<int const&&, char volatile>, char const volatile&&>);
   // Check we don't strip underlying `const` from `Dst`
   static_assert(std::is_same_v<like_t<int, const char>, const char>);
   static_assert(std::is_same_v<like_t<int, const char&>, const char>);

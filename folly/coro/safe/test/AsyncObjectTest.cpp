@@ -17,6 +17,8 @@
 #include <folly/coro/GtestHelpers.h>
 #include <folly/coro/safe/AsyncObject.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 namespace folly::coro {
 
 struct Empty : public AsyncObject {
@@ -196,3 +198,5 @@ class SomethingDerived {
 */
 
 // XXX async_closure test that shows it binds eagerly
+
+#endif

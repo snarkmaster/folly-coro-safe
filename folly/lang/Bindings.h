@@ -18,6 +18,12 @@
 
 #include <folly/Utility.h>
 
+// Future: This is C++20.  If there is interest in this outside of
+// `folly/coro/safe/`, it should be possible to fix the compile errors with
+// the older MSVC still in-use (e.g. "lambdas in an unevaluated context"),
+// but this effort is not worthwhile yet. Remember to also un-ifdef the test.
+#ifndef _WIN32
+
 /// ## Purpose of this utility
 ///
 /// Enable functions to customize how they bind arguments.  Key features:
@@ -602,3 +608,5 @@ inline constexpr detail::ensure_binding_tuple_with_<std::identity{}>
     ensure_binding_tuple;
 
 } // namespace folly::bindings
+
+#endif

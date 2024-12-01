@@ -22,6 +22,8 @@
 #include <folly/coro/safe/AsyncClosure-fwd.h>
 #include <folly/coro/safe/Captures.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 /// `SafeAsyncScope` wraps `AsyncScope` to improve safety:
 ///   - Exception-safety: `SafeAsyncScope` automatically waits to join the
 ///     scope, while manual `join()` calls often have uncaught exception bugs.
@@ -93,7 +95,7 @@
 /// scheduled on the scope.
 ///
 /// There is a CAVEAT -- such sub-closures will see the safety of their own
-/// `capture`s downgraded to `body_only_ref`.  This is to prevent this class
+/// `capture`s downgraded to `after_cleanup_ref`.  This is to prevent this class
 /// of dangling reference bug: the sub-closure schedules a sub-task on the
 /// scope, referencing its own arg, which could easily be freed before the
 /// sub-task completes.
@@ -472,7 +474,7 @@ class SafeAsyncScopeContextProxy : NonCopyableNonMovable {
     // remain valid as long as the sub-closure is alive.
     //
     // The sub-closure's own `captures` will still be downgraded to
-    // `body_only_ref`, even though the sub-closure will NOT be created as
+    // `after_cleanup_ref`, even though the sub-closure will NOT be created as
     // `shared_cleanup` (a hack to satisfy the `schedule()` safety
     // constraints).
     //
@@ -617,3 +619,5 @@ SafeAsyncScopeProxy(SafeAsyncScope<CancelPolicy>)
     -> SafeAsyncScopeProxy<CancelPolicy>;
 
 } // namespace folly::coro
+
+#endif

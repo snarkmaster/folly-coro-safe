@@ -304,24 +304,26 @@ struct copy_cvref_<Src&&> {
 };
 } // namespace detail
 
-/**
- * A type trait to replace the cvref category of `Dst` with that of `Src`.
- *
- * CAUTION: This is NOT what you typically want in a "forwarding" or
- * "deducing `this`" context.  If you're going to cast another reference to
- * `copy_cvref_t`, you likely actually want `folly::forward_like` /
- * `like_t`, or `std::forward_like` in C++23.  In brief, the problems with
- * forwarding via `copy_cvref` are:
- *   - Removing `const` from a `Dst` that is backed by a value is quite
- *     problematic.  If you `static_cast<copy_cvref_t<...>>(dst)`, then
- *     you'll get a compile error.  If you C-style cast, `const_cast`, or
- *     `reinterpret_cast`, you may even get UB by treating `const` memory as
- *     non-`const`.
- *   - The `Dst` value would typically have an address, and the `volatile`
- *     qualifier is a function of that address, so it's incorrect to derive
- *     that from `Src`.
- * `like_t` and `forward_like` avoid both of these problems.
- */
+/// copy_cvref_t
+///
+/// A trait alias to replace the cvref category of `Dst` with that of `Src`.
+///
+/// CAUTION: This is not what is typically wanted in a forwarding or
+/// deducing-`this` context, or in most cases of casting one reference
+/// to another. In such cases, the most appropriate tool would be `like_t`,
+/// or `std::forward_like` in C++23.
+///
+/// Some of the problems with forwarding via `copy_cvref` are:
+/// - Removing `const` from a `Dst` that is backed by a value is quite
+///   problematic. The case of `static_cast<copy_cvref_t<...>>(dst)`
+///   would yield a compile error. The case of a C-style cast, `const_cast`,
+///   `reinterpret_cast`, or functional case may compile but may have
+///   undefined behavior by treating non-writable memory as writable.
+/// - The `Dst` value would typically have an address, and the `volatile`
+///   qualifier is a function of that address, so it would be incorrect
+///   to derive that from `Src`.
+///
+/// `like_t` and `forward_like` avoid these problems.
 template <typename Src, typename Dst>
 using copy_cvref_t =
     typename detail::copy_cvref_<Src>::template apply<remove_cvref_t<Dst>>;
@@ -350,20 +352,27 @@ using copy_const_t = std::conditional_t<
     Dst>;
 } // namespace detail
 
-/// Mimic: `like_t` from p0847r0 (not standardized), but with semantics made
+/// like
+/// like_t
+///
+/// Similar to `like` and `like_t` from p0847r0, but with semantics made
 /// compatible with the C++23 `std::forward_like` from p2445r0.
-///   - Never removes `const` qualifiers from `Dst`.
-///   - Leaves any `volatile` as it was on `Dst`, `Src` volatility is ignored.
-///   - Unlike `__forward_like_t` from p2445r0, distinguishes between value
-///     `Src` and rvalue-reference `Src` types.
-/// The above are the right semantics for most users. If you are in the rare
-/// minority that needs to project ALL cvref qualifiers from `Src` to `Dst`,
-/// use `copy_cvref_t`, but beware of the UB issues described in its docblock.
+///
+/// Differences:
+/// - Never removes `const` qualifiers from `Dst`.
+/// - Leaves any `volatile` as it was on `Dst`, `Src` volatility is ignored.
+/// - Unlike `__forward_like_t` from p2445r0, distinguishes between value
+///   `Src` and rvalue-reference `Src` types.
+///
+/// The above are the right semantics for most cases.
+///
+/// The rare cases which need to replace all cvref qualifiers from `Src` onto
+/// `Dst` may use `copy_cvref_t`. But heed the cautions in its documentation.
+///
+/// mimic: `like`, p0847r0
 template <typename Src, typename Dst>
 using like_t = typename detail::copy_ref_<Src>::template apply<
     detail::copy_const_t<Src, std::remove_reference_t<Dst>>>;
-
-/// Mimic: `like`, p0847r0 -- but see the caveats in the `like_t` doc!
 template <typename Src, typename Dst>
 struct like {
   using type = like_t<Src, Dst>;

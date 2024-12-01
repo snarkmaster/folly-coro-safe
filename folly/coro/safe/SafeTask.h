@@ -20,6 +20,13 @@
 #include <folly/coro/safe/NowTask.h>
 #include <folly/coro/safe/SafeAlias.h>
 
+// `folly/coro/safe` is, by and large, C++20 code.  Unfortunately, the rest
+// of `folly` still has to support some older C++17-only versions of MSVC
+// (which also include "fun" compiler bugs).  Rather than fight with these,
+// the plan is to focus on adoption of `folly/coro/safe` on Linux & Mac, and
+// wait for the older MSVCs to age out.
+#ifndef _WIN32
+
 namespace folly::coro {
 
 /// Typically, you will not use `SafeTask` directly.  Instead, choose one of
@@ -59,14 +66,15 @@ using ValueTask = SafeTask<safe_alias::maybe_value, T>;
 template <typename T>
 using CoCleanupSafeTask = SafeTask<safe_alias::co_cleanup_safe_ref, T>;
 
-// A minimally `SafeTask` that is supposed to be wrapped in an
-// `async_closure` (`as_async_closure`, `schedule*Closure`, etc).
+// Use `ClosureTask` as the inner coro type for tasks meant to be wrapped
+// in an `async_closure` (`as_async_closure`, `schedule*Closure`, etc).
 //
-// `ClosureTask` is only awaitable via `async_closure` and friends.  This
-// deters users from the unsafe behavior of moving value capture wrappers
-// (marked `unsafe_closure_internal`) out of the owning closure.  `SafeTask`
-// with higher safety levels is allowed in `async_closure()`, so this
-// restricted awaitability isn't a UX limitation.
+// Outside of a closure, `ClosureTask` is neither awaitable nor movable.
+// The `unsafe_closure_internal` specialization below explains why.
+//
+// If your use-case calls for a `SafeTask` that is sometimes wrapped in a
+// closure, and sometimes isn't, you might add a `MinClosureSafeTask` type
+// alias for `closure_min_arg_safety`.
 template <typename T>
 using ClosureTask = SafeTask<safe_alias::unsafe_closure_internal, T>;
 
@@ -227,10 +235,11 @@ struct SafeTaskBaseTraits {
   using type = TaskWrapperCrtp<SafeTask<ArgSafety, T>, T, Task<T>>;
 };
 
-// `async_closure` requires the inner coro to be a `SafeTask` -- otherwise
-// it cannot guarantee that none of the args are taken by reference.
-// Conveniently, `SafeTask` also checks the return type is safe, and the
-// coro's callable is stateless, so `async_closure` can skip those checks.
+// `async_closure` cannot emit a `SafeTask` without the inner coro being a
+// `SafeTask` -- otherwise it could not guarantee that none of the args are
+// taken by reference.  Conveniently, `SafeTask` also checks the return type
+// is safe, and the coro's callable is stateless, so `async_closure` can
+// skip those checks.
 //
 // This `ClosureTask` implementation uses a `safe_alias` level safer than
 // `unsafe` to get all of the above `SafeAlias` checks.  The level also has
@@ -238,8 +247,10 @@ struct SafeTaskBaseTraits {
 //  - `capture<Value>` (safety `unsafe_closure_internal`) should stay in the
 //    original closure.  Users can move the content, but shouldn't move the
 //    wrapper, since that messes with the safety system.
-//  - `co_cleanup_capture<Value&>` (safety `shared_cleanup`) can safetly
-//    be moved or copied into other closures.
+//  - `co_cleanup_capture<Value&>` refs (safety `shared_cleanup`) can
+//    safetly be moved or copied into other closures.
+//  - By the way, `co_cleanup_capture<Value>` should never be moved from the
+//    owning closure that's responsible for its cleanup.
 template <typename T>
 struct SafeTaskBaseTraits<safe_alias::unsafe_closure_internal, T> {
   using base = OpaqueTaskWrapperCrtp<
@@ -247,10 +258,7 @@ struct SafeTaskBaseTraits<safe_alias::unsafe_closure_internal, T> {
       T,
       Task<T>>;
   // In today's usage, `ClosureTask` does not benefit from being movable, so
-  // mark it non-movable to be safer & preserve option value.  On the other
-  // hand, this constraint is likely fine to relax later, since it's got
-  // strong redundant safety checks, namely -- a `SafeTask` that is only
-  // awaitable via `async_closure`s.
+  // mark it non-movable to be safer & preserve option value.
   struct type : public base, private NonCopyableNonMovable {
     using base::base;
   };
@@ -358,3 +366,5 @@ template <folly::safe_alias ArgSafety, typename T>
 struct folly::detail::safe_alias_for_<
     folly::coro::SafeTaskWithExecutor<ArgSafety, T>>
     : folly::safe_alias_constant<ArgSafety> {};
+
+#endif

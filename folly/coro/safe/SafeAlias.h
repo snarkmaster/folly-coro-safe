@@ -82,8 +82,9 @@ namespace folly {
 // Always use >= for safety gating.
 //
 // Note: Only `async_closure*()` from `folly coro/safe/` use the middle
-// safety levels `shared_cleanup`, `body_only_ref`, and `co_cleanup_safe_ref`.
-// Normal user code should stick to `maybe_value` and `unsafe`.
+// safety levels `shared_cleanup`, `after_cleanup_ref`, and
+// `co_cleanup_safe_ref`. Normal user code should stick to `maybe_value` and
+// `unsafe`.
 enum class safe_alias {
   // Definitely has aliasing, we know nothing of the lifetime.
   unsafe,
@@ -100,16 +101,18 @@ enum class safe_alias {
   // for arguments, and the minimum level of `SafeTask` it will emit.
   //   - Represents an arg that can schedule a cleanup callback on an
   //     ancestor's cleanup arg `A`.  This safety level cannot be stronger
-  //     than `body_only_ref` because otherwise such a ref could be passed to
+  //     than `after_cleanup_ref` because otherwise such a ref could be passed
+  //     to
   //     a cleanup callback on a different ancestor's cleanup arg `B` -- and
   //     `A` could be invalid by the time `B` runs.
-  //   - Follows all the rules of `body_only_ref`.
+  //   - Follows all the rules of `after_cleanup_ref`.
   //   - Additionally, when a `shared_cleanup` ref is passed to
-  //     `async_closure()`, it knows to mark its own args as `body_only_ref`.
+  //     `async_closure()`, it knows to mark its own args as
+  //     `after_cleanup_ref`.
   //     This prevents the closure from passing its short-lived `capture`s
   //     into a new callback on the longer-lived `shared_cleanup` arg.
   //     Conversely, in the absence of `shared_cleanup` args, it is safe for
-  //     `async_closure()` to upgrade `body_only_capture*<Ref>`s to
+  //     `async_closure()` to upgrade `after_cleanup_capture*<Ref>`s to
   //     `capture*<Ref>`s, since its cleanup will terminate before the
   //     parent's will start.
   shared_cleanup,
@@ -124,7 +127,7 @@ enum class safe_alias {
   //   - NOT safe to return or pass to callbacks from ancestor closures
   //   - NOT safe to pass to callbacks of the same closure's cleanup args
   //     (e.g. `SafeAsyncScope`).
-  body_only_ref,
+  after_cleanup_ref,
   // Used only in `async_closure*()`:
   //   - Valid until the end of the current closure's cleanup.
   //   - Safe to pass to sub-closures, or to callbacks from this
@@ -211,7 +214,7 @@ struct safe_alias_for_<::folly::tag_t<As...>> : safe_alias_for_pack_<As...> {};
 //
 // If you know a more restrictive safety level for your ref, annotate it to
 // improve safety:
-//  - `body_only_ref` for things owned by co_cleanup args of this closure,
+//  - `after_cleanup_ref` for things owned by co_cleanup args of this closure,
 //  - `co_cleanup_safe_ref` for refs to non-cleanup args owned by this closure,
 //    or any ancestor closure.
 //

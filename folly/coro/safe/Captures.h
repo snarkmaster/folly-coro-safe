@@ -25,6 +25,8 @@
 #include <folly/lang/Assume.h>
 #include <folly/lang/Bindings.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 // XXX distill docblock from mess in CapturesDoc.h
 // XXX Touch on copyability / movability of types?
 /*
@@ -133,10 +135,10 @@ concept has_async_closure_co_cleanup =
 // Any binding with this key is meant to be owned by the async closure
 enum class capture_projection {
   any = 0, // No user-expressed storage preference
-  // User wants this arg in a separate `unique_ptr`.  This is just syntax
-  // sugar over storing `unique_ptr<T>` in an `capture`, but it's nice
-  // because it saves the caller from needing to dereference twice.
-  unique,
+  // Syntax sugar: Passing `as_capture_indirect()` with a pointer-like (e.g.
+  // `unique_ptr<T>`), this emits a `capture_indirect<>`, giving access to
+  // the underlying `T` with just one dereference `*` / `->`, instead of 2.
+  indirect,
 };
 
 template <typename Base>
@@ -165,23 +167,27 @@ inline constexpr ::folly::bindings::detail::ensure_binding_tuple_with_<
 inline constexpr ::folly::bindings::detail::ensure_binding_tuple_with_<
     [](std::derived_from<folly::bindings::detail::bind_info> auto bi) {
       return detail::capture_bind_info<decltype(bi)>{
-          std::move(bi), detail::capture_projection::unique};
+          std::move(bi), detail::capture_projection::indirect};
     }>
-    as_capture_unique;
+    as_capture_indirect;
 
 template <typename T>
   requires(!detail::has_async_closure_co_cleanup<T>)
 class capture;
 template <typename T>
   requires(!detail::has_async_closure_co_cleanup<T>)
-class body_only_capture;
+class after_cleanup_capture;
+template <typename T>
+class capture_indirect;
+template <typename T>
+class after_cleanup_capture_indirect;
 
 // Given an cvref-qualified `capture` type, what `capture` reference
 // type is it implicitly converible to?  The input value category affects
 // the output reference type exactly as you'd expect for types NOT wrapped
 // by `capture`. But, additionally, this knows to pick the correct wrapper:
 //   - `co_cleanup_capture` inputs become `co_cleanup_capture<SomeRef>`
-//   - `body_only_ref_*` inputs become `body_only_capture<SomeRef>`
+//   - `after_cleanup_ref_*` inputs become `after_cleanup_capture<SomeRef>`
 //   - everything else becomes just `capture<SomeRef>`
 template <typename Captures>
 using capture_implicit_ref_t =
@@ -254,7 +260,7 @@ class capture_crtp_base {
   // it provides overloads for `capture_restricted_lref_proxy` and
   // `capture_restricted_ptr_proxy`.  There's no default behavior for
   // restricted refs, because the underlying class needs to implement strong
-  // enough safety constraints that the ref can be `body_only_ref`.
+  // enough safety constraints that the ref can be `after_cleanup_ref`.
   static constexpr decltype(auto) get_lref_proxy(auto& self) {
     auto& lref = self.get_lref();
     if constexpr (std::is_base_of_v<capture_restricted_tag, Derived>) {
@@ -323,11 +329,12 @@ class capture_crtp_base {
   // below implicit conversions.  This is how `async_closure()` (and
   // similar) create a matching `capture<Ref>` from a `Derived` instance.
   // The resulting type is `RefArgT`, except for the narrow case when a
-  // non-`shared_cleanup` closure is converting a `body_only_ref_` input.
+  // non-`shared_cleanup` closure is converting a `after_cleanup_ref_`
+  // input.
   //   - `Derived::capture_type` may be a value or a reference
   //   - `T` may be a value or reference
   // The main reason `to_capture_ref` is locked down is that when
-  // `SharedCleanupClosure == false`, we upgrade `body_only_ref_` refs.
+  // `SharedCleanupClosure == false`, we upgrade `after_cleanup_ref_` refs.
   // This is unsafe to do unless we know that the ref is going into
   // an independent, nested async scope.
   template <bool SharedCleanupClosure>
@@ -437,7 +444,7 @@ class capture_crtp_base {
     // If the receiving closure takes no `shared_cleanup` args, then it
     // cannot* pass any of its `capture` refs to an external, longer-lived
     // cleanup callback.  That implies we can safely upgrade any incoming
-    // `body_only_ref_` refs to regular post-cleanup `capture` refs --
+    // `after_cleanup_ref_` refs to regular post-cleanup `capture` refs --
     // anything received from the parent is `co_cleanup_safe_ref` from the point
     // of view of **this** closure's cleanup args, and it cannot access others.
     //
@@ -453,8 +460,12 @@ class capture_crtp_base {
       return RefArgT<V&&>{capture_private_t{}, std::move(b)};
     } else if constexpr (
         !SharedCleanupClosure &&
-        std::is_same_v<RefArgT<V>, body_only_capture<V>>) {
+        std::is_same_v<RefArgT<V>, after_cleanup_capture<V>>) {
       return capture<V&&>{capture_private_t{}, std::move(b)};
+    } else if constexpr (
+        !SharedCleanupClosure &&
+        std::is_same_v<RefArgT<V>, after_cleanup_capture_indirect<V>>) {
+      return capture_indirect<V&&>{capture_private_t{}, std::move(b)};
     } else {
       return RefArgT<V&&>{capture_private_t{}, std::move(b)};
     }
@@ -579,10 +590,9 @@ template <typename Derived, template <typename> class RefArgT, typename T>
 //
 // We deliberately do NOT support moving out the underlying `unique_ptr`
 // because heap storage is meant to be an implementation detail, and is not
-// intended to be nullable.  If a user wants `unique_ptr` semantics, they
-// have `capture_unique`.
-class capture_heap_storage : public capture_crtp_base<Derived, RefArgT, T>,
-                             folly::MoveOnly {
+// intended to be nullable.  A user needing nullability should pass a
+// `unique_ptr` either as `capture_indirect` (1 dereference) or `capture` (2).
+class capture_heap_storage : public capture_crtp_base<Derived, RefArgT, T> {
  public:
   capture_heap_storage(capture_private_t, auto binding)
       : p_(std::make_unique<T>(std::move(binding).what_to_bind())) {}
@@ -596,13 +606,71 @@ class capture_heap_storage : public capture_crtp_base<Derived, RefArgT, T>,
   std::unique_ptr<T> p_;
 };
 
+// This is a direct counterpart to `capture_storage` that collapses two
+// dereference operations into one for better UX.  There is no need for a
+// `capture_heap_indirect_storage`, since this "indirect" syntax sugar only
+// applies to pointer types, which are always cheaply movable, and thus
+// don't benefit from `make_in_place`.
+//
+// Similarly, no support for `co_cleanup()` captures since those generally
+// aren't pointer-like, and won't suffer from double-dereferences.
 template <typename Derived, template <typename> class RefArgT, typename T>
-class capture_unique_storage
-    : public capture_heap_storage<Derived, RefArgT, T> {
+  requires(!has_async_closure_co_cleanup<T>)
+class capture_indirect_storage : public capture_storage<Derived, RefArgT, T> {
  public:
-  using capture_heap_storage<Derived, RefArgT, T>::capture_heap_storage;
-  std::unique_ptr<T> move_unique_ptr() && { return std::move(this->p_); }
-  explicit constexpr operator bool() const noexcept { return this->p_; }
+  using capture_storage<Derived, RefArgT, T>::capture_storage;
+
+  // These are all intended to be equivalent to dereferencing the
+  // corresponding `capture<T>` twice.
+  [[nodiscard]] constexpr decltype(auto) operator*() & noexcept {
+    return *(capture_storage<Derived, RefArgT, T>::operator*());
+  }
+  [[nodiscard]] constexpr decltype(auto) operator*() const& noexcept {
+    return *(capture_storage<Derived, RefArgT, T>::operator*());
+  }
+  [[nodiscard]] constexpr decltype(auto) operator*() && noexcept {
+    return *(
+        std::move(*this).capture_storage<Derived, RefArgT, T>::operator*());
+  }
+  [[nodiscard]] constexpr decltype(auto) operator*() const&& noexcept {
+    return *(
+        std::move(*this).capture_storage<Derived, RefArgT, T>::operator*());
+  }
+  [[nodiscard]] constexpr decltype(auto) operator->() & noexcept {
+    return (capture_storage<Derived, RefArgT, T>::operator->())->operator->();
+  }
+  [[nodiscard]] constexpr decltype(auto) operator->() const& noexcept {
+    return (capture_storage<Derived, RefArgT, T>::operator->())->operator->();
+  }
+  [[nodiscard]] constexpr decltype(auto) operator->() && noexcept {
+    return (std::move(*this).capture_storage<Derived, RefArgT, T>::operator->())
+        ->operator->();
+  }
+  [[nodiscard]] constexpr decltype(auto) operator->() const&& noexcept {
+    return (std::move(*this).capture_storage<Derived, RefArgT, T>::operator->())
+        ->operator->();
+  }
+
+  // Unlike other captures, `capture_indirect` is nullable since the
+  // underlying pointer type is, too.
+  explicit constexpr operator bool() const
+      noexcept(noexcept(this->get_lref().operator bool())) {
+    return this->get_lref().operator bool();
+  }
+
+  // Use these to access the underlying `T`, instead of dereferencing twice.
+  decltype(auto) get_underlying() & {
+    return capture_storage<Derived, RefArgT, T>::operator*();
+  }
+  decltype(auto) get_underlying() const& {
+    return capture_storage<Derived, RefArgT, T>::operator*();
+  }
+  decltype(auto) get_underlying() && {
+    return std::move(capture_storage<Derived, RefArgT, T>::operator*());
+  }
+  decltype(auto) get_underlying() const&& {
+    return std::move(capture_storage<Derived, RefArgT, T>::operator*());
+  }
 };
 
 // `capture` refs are only valid as long as their on-closure storage.
@@ -675,13 +743,15 @@ class capture : public detail::capture_storage<capture<T>, capture, T> {
 };
 template <typename T> // may be a value or reference
   requires(!detail::has_async_closure_co_cleanup<T>)
-class body_only_capture
+class after_cleanup_capture
     : public detail::
-          capture_storage<body_only_capture<T>, body_only_capture, T> {
+          capture_storage<after_cleanup_capture<T>, after_cleanup_capture, T> {
  public:
-  FOLLY_MOVABLE_AND_DEEP_CONST_LREF_COPYABLE(body_only_capture, T);
-  using detail::capture_storage<body_only_capture<T>, body_only_capture, T>::
-      capture_storage;
+  FOLLY_MOVABLE_AND_DEEP_CONST_LREF_COPYABLE(after_cleanup_capture, T);
+  using detail::capture_storage<
+      after_cleanup_capture<T>,
+      after_cleanup_capture,
+      T>::capture_storage;
 };
 
 // The use-case for `capture_heap` is to allow a closure without cleanup
@@ -692,9 +762,10 @@ class body_only_capture
 //  - Then, any use of `make_in_place` would auto-create an outer task.
 //  - Any user code that explicitly specifies `capture_heap` in signatures
 //    would need to be updated to `capture`.
-//  - Any places that rely on moving `capture_heap<V>` would need to
-//    migrate to `capture_unique` (which, in contrast, is nullable).  This
-//    should be rare, since we mark all value `capture`s as `unsafe`.
+//  - Any places that rely on moving `capture_heap<V>` would need to migrate
+//    to `capture_indirect<std::unique_ptr<V>>{}` (which, in contrast, is
+//    nullable).  This should be rare, since we mark all value `capture`s as
+//    `unsafe` to encourage leaving the value `capture` wrappers in-closure.
 template <typename T>
 class capture_heap
     : public detail::capture_heap_storage<capture_heap<T>, capture, T> {
@@ -703,39 +774,44 @@ class capture_heap
       capture_heap_storage;
 };
 template <typename T>
-class body_only_capture_heap : public detail::capture_heap_storage<
-                                   body_only_capture_heap<T>,
-                                   body_only_capture,
-                                   T> {
+class after_cleanup_capture_heap : public detail::capture_heap_storage<
+                                       after_cleanup_capture_heap<T>,
+                                       after_cleanup_capture,
+                                       T> {
  public:
   using detail::capture_heap_storage<
-      body_only_capture_heap<T>,
-      body_only_capture,
+      after_cleanup_capture_heap<T>,
+      after_cleanup_capture,
       T>::capture_heap_storage;
 };
 
-// Sugar for `capture<unique_ptr<T>>` that avoids dereferencing twice.
+// `capture_indirect<SomePtr<T>>` is like `capture<SomePtr<T>>` with syntax
+// sugar to avoid dereferencing twice.  Use `get_underlying()` instead of
+// `*` / `->` to access the pointer object itself.
 template <typename T>
-class capture_unique
-    : public detail::capture_unique_storage<capture_unique<T>, capture, T> {
+class capture_indirect
+    : public detail::
+          capture_indirect_storage<capture_indirect<T>, capture_indirect, T> {
  public:
-  using detail::capture_unique_storage<capture_unique<T>, capture, T>::
-      capture_unique_storage;
+  using detail::capture_indirect_storage<
+      capture_indirect<T>,
+      capture_indirect,
+      T>::capture_indirect_storage;
 };
 template <typename T>
-class body_only_capture_unique : public detail::capture_unique_storage<
-                                     body_only_capture_unique<T>,
-                                     body_only_capture,
-                                     T> {
+class after_cleanup_capture_indirect : public detail::capture_indirect_storage<
+                                           after_cleanup_capture_indirect<T>,
+                                           after_cleanup_capture_indirect,
+                                           T> {
  public:
-  using detail::capture_unique_storage<
-      body_only_capture_unique<T>,
-      body_only_capture,
-      T>::capture_unique_storage;
+  using detail::capture_indirect_storage<
+      after_cleanup_capture_indirect<T>,
+      after_cleanup_capture_indirect,
+      T>::capture_indirect_storage;
 };
 
 // A closure that takes a cleanup arg is required to mark its directly-owned
-// `capture`s with the `body_only_ref_` prefix, to prevent refs to these
+// `capture`s with the `after_cleanup_ref_` prefix, to prevent refs to these
 // short-lived args from being passed into longer-lived callbacks.
 //
 // Don't allow r-value refs to cleanup args, since moving those out of the
@@ -757,7 +833,7 @@ class co_cleanup_capture
 };
 
 // Can only schedule `maybe_value` closures, but in exchange does NOT cause
-// closures that accept such a ref to mark its own args `body_only_ref` --
+// closures that accept such a ref to mark its own args `after_cleanup_ref` --
 // unlike co_cleanup_capture<V&>.
 //
 // TODO: Note that (IIUC, double-check this & implement) a closure taking a
@@ -788,12 +864,18 @@ template <typename T>
 concept is_any_capture =
     (is_instantiation_of_v<capture, T> ||
      is_instantiation_of_v<capture_heap, T> ||
-     is_instantiation_of_v<capture_unique, T> ||
-     is_instantiation_of_v<body_only_capture, T> ||
-     is_instantiation_of_v<body_only_capture_heap, T> ||
-     is_instantiation_of_v<body_only_capture_unique, T> ||
+     is_instantiation_of_v<capture_indirect, T> ||
+     is_instantiation_of_v<after_cleanup_capture, T> ||
+     is_instantiation_of_v<after_cleanup_capture_heap, T> ||
+     is_instantiation_of_v<after_cleanup_capture_indirect, T> ||
      is_instantiation_of_v<co_cleanup_capture, T> ||
      is_instantiation_of_v<restricted_co_cleanup_capture, T>);
+template <typename T>
+concept is_any_capture_ref =
+    is_any_capture<T> && std::is_reference_v<typename T::capture_type>;
+template <typename T>
+concept is_any_capture_val =
+    is_any_capture<T> && !std::is_reference_v<typename T::capture_type>;
 } // namespace detail
 
 } // namespace folly::coro
@@ -818,26 +900,30 @@ struct safe_alias_for_<::folly::coro::capture_heap<T>>
     : ::folly::coro::detail::
           capture_safety<T, safe_alias::co_cleanup_safe_ref> {};
 template <typename T>
-struct safe_alias_for_<::folly::coro::capture_unique<T>>
+struct safe_alias_for_<::folly::coro::capture_indirect<T>>
     : ::folly::coro::detail::
           capture_safety<T, safe_alias::co_cleanup_safe_ref> {};
 
 template <typename T>
-struct safe_alias_for_<::folly::coro::body_only_capture<T>>
-    : ::folly::coro::detail::capture_safety<T, safe_alias::body_only_ref> {};
+struct safe_alias_for_<::folly::coro::after_cleanup_capture<T>>
+    : ::folly::coro::detail::capture_safety<T, safe_alias::after_cleanup_ref> {
+};
 template <typename T>
-struct safe_alias_for_<::folly::coro::body_only_capture_heap<T>>
-    : ::folly::coro::detail::capture_safety<T, safe_alias::body_only_ref> {};
+struct safe_alias_for_<::folly::coro::after_cleanup_capture_heap<T>>
+    : ::folly::coro::detail::capture_safety<T, safe_alias::after_cleanup_ref> {
+};
 template <typename T>
-struct safe_alias_for_<::folly::coro::body_only_capture_unique<T>>
-    : ::folly::coro::detail::capture_safety<T, safe_alias::body_only_ref> {};
+struct safe_alias_for_<::folly::coro::after_cleanup_capture_indirect<T>>
+    : ::folly::coro::detail::capture_safety<T, safe_alias::after_cleanup_ref> {
+};
 
 template <typename T>
 struct safe_alias_for_<::folly::coro::co_cleanup_capture<T>>
     : ::folly::coro::detail::capture_safety<T, safe_alias::shared_cleanup> {};
 template <typename T>
 struct safe_alias_for_<::folly::coro::restricted_co_cleanup_capture<T>>
-    : ::folly::coro::detail::capture_safety<T, safe_alias::body_only_ref> {};
+    : ::folly::coro::detail::capture_safety<T, safe_alias::after_cleanup_ref> {
+};
 
 } // namespace folly::detail
 
@@ -857,5 +943,7 @@ class binding_policy_impl<BI, Binding> {
   using signature_type = typename standard::signature_type;
 };
 } // namespace folly::bindings::detail
+
+#endif
 
 #undef FOLLY_MOVABLE_AND_DEEP_CONST_LREF_COPYABLE

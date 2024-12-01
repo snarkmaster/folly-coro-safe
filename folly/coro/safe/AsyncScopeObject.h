@@ -18,6 +18,8 @@
 
 #include <folly/coro/safe/AsyncObject.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 namespace folly::coro {
 
 // If your `AsyncObject` includes one or more `SafeAsyncObject`-like
@@ -203,3 +205,5 @@ struct safe_alias_for_<
     ::folly::coro::AsyncScopeSlotObject::SlotLimitedObjectPtr<T, P>>
     : safe_alias_constant<safe_alias::shared_cleanup> {};
 } // namespace folly::detail
+
+#endif

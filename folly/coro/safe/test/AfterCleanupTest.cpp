@@ -18,8 +18,11 @@
 #include <folly/coro/safe/AfterCleanup.h>
 #include <folly/coro/safe/AsyncClosure.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 using namespace folly;
 using namespace folly::coro;
+using namespace folly::bindings;
 
 struct Cleanup {
   std::optional<capture<int&>> total_;
@@ -30,9 +33,9 @@ struct Cleanup {
   }
 };
 
-CO_TEST(AsyncClosure, XXX) {
+CO_TEST(AfterCleanup, move) {
   int res = co_await async_closure(
-      [](auto cleanup, auto total) -> ClosureTask<move_after_cleanup<int>> {
+      [](auto cleanup, auto total) -> ClosureTask<move_after_cleanup_t<int>> {
         cleanup->total_ = total;
         *total += 2; // 9
         co_return move_after_cleanup(total); // 90
@@ -42,10 +45,44 @@ CO_TEST(AsyncClosure, XXX) {
   EXPECT_EQ(90, res);
 }
 
-// XXX test ConvertTo, e.g. with atomic_int -> int
+CO_TEST(AfterCleanup, moveAs) {
+  auto res = co_await async_closure(
+      [](auto cleanup,
+         auto total) -> ClosureTask<move_after_cleanup_t<int, char>> {
+        cleanup->total_ = total;
+        *total += 2; // 9
+        co_return move_after_cleanup_as<char>(total); // 90
+      },
+      as_capture(Cleanup{}),
+      as_capture(7));
+  static_assert(std::is_same_v<char, decltype(res)>);
+  EXPECT_EQ(static_cast<char>(90), res);
+}
+
+CO_TEST(AfterCleanup, noOuterCoroMove) {
+  int res = co_await async_closure(
+      [](capture<int> total) -> ClosureTask<int> {
+        *total += 2; // 9
+        co_return move_after_cleanup(total); // still 9
+      },
+      as_capture(7));
+  EXPECT_EQ(9, res);
+}
+
+CO_TEST(AfterCleanup, noOuterCoroMoveAs) {
+  auto res = co_await async_closure(
+      [](capture_heap<std::atomic_int> n) -> ClosureTask<char> {
+        co_return move_after_cleanup_as<char>(n);
+      },
+      as_capture(make_in_place<std::atomic_int>('@')));
+  static_assert(std::is_same_v<char, decltype(res)>);
+  EXPECT_EQ('@', res);
+}
+
+// XXX test capture_unique
 
 #if 0 // XXX
-CO_TEST(AsyncClosureTest, co_scheduleClosure_MoveAfterJoin) {
+CO_TEST(AfterCleanupTest, co_scheduleClosure_MoveAfterJoin) {
   EXPECT_EQ(
       "hello stranger",
       co_await asyncClosure(
@@ -63,7 +100,7 @@ CO_TEST(AsyncClosureTest, co_scheduleClosure_MoveAfterJoin) {
           "s"_id = asNonConst(std::string{"hello"})));
 }
 
-CO_TEST(AsyncClosureTest, co_scheduleClosure_NamedMoveAfterJoin) {
+CO_TEST(AfterCleanupTest, co_scheduleClosure_NamedMoveAfterJoin) {
   auto res = co_await asyncClosure(
       [](auto& scope) -> ClosureTask<NamedMoveAfterJoin<
                           "a"_id.type<std::unique_ptr<int>>,
@@ -90,4 +127,6 @@ CO_TEST(AsyncClosureTest, co_scheduleClosure_NamedMoveAfterJoin) {
   EXPECT_EQ(707, *res["a"_id]);
   EXPECT_EQ(404, ++(*res["b1"_id])); // the `NamedValues` are NOT const
 }
+#endif
+
 #endif

@@ -22,6 +22,8 @@
 static_assert(false, "Leaked FOLLY_MOVABLE_AND_DEEP_CONST_LREF_COPYABLE macro");
 #endif
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 namespace folly::coro::detail {
 
 struct SimpleCleanup {
@@ -30,15 +32,14 @@ struct SimpleCleanup {
   void canMutate() {}
 };
 
-template <typename T>
-using capture_type_const_ref_t = const std::remove_reference_t<
-    typename std::remove_reference_t<T>::capture_type>&;
+decltype(auto) get_address(const auto& v) {
+  return &v;
+}
 
 template <typename TA, typename TB>
 void check_capture_same_address(TA&& a, TB&& b) {
   EXPECT_EQ(
-      &static_cast<capture_type_const_ref_t<TA>>(*std::forward<TA>(a)),
-      &static_cast<capture_type_const_ref_t<TB>>(*std::forward<TB>(b)));
+      get_address(*std::forward<TA>(a)), get_address(*std::forward<TB>(b)));
 }
 
 struct CapturesTest : testing::Test {
@@ -62,63 +63,63 @@ struct CapturesTest : testing::Test {
     return std::forward<Arg>(arg).template to_capture_ref<false>(arg_priv);
   }
 
-  template <template <typename> class RefArg = capture>
+  template <template <typename> class RefArg = capture, typename T = int>
   void check_ref_from_mutable(int expected, auto a, auto make_ref) {
     {
       auto ar = make_ref(a);
-      static_assert(std::is_same_v<decltype(ar), RefArg<int&>>);
+      static_assert(std::is_same_v<decltype(ar), RefArg<T&>>);
       EXPECT_EQ(expected, *ar);
       *a += 10;
       expected += 10;
 
       auto ar2 = make_ref(ar);
-      static_assert(std::is_same_v<decltype(ar2), RefArg<int&>>);
+      static_assert(std::is_same_v<decltype(ar2), RefArg<T&>>);
       EXPECT_EQ(expected, *ar2);
 
-      // Future: How to concisely test that just `int&` won't compile?
+      // Future: How to concisely test that just `T&` won't compile?
       auto ar3 = make_ref(std::as_const(ar2));
-      static_assert(std::is_same_v<decltype(ar3), RefArg<const int&>>);
+      static_assert(std::is_same_v<decltype(ar3), RefArg<const T&>>);
       EXPECT_EQ(expected, *ar3);
 
       // Future: How to test here (and below) that `std::move` is required?
       auto ar4 = make_ref(std::move(ar2));
-      static_assert(std::is_same_v<decltype(ar4), RefArg<int&&>>);
+      static_assert(std::is_same_v<decltype(ar4), RefArg<T&&>>);
       EXPECT_EQ(expected, *std::move(ar4));
     }
     {
       auto ar = make_ref(std::move(a));
-      static_assert(std::is_same_v<decltype(ar), RefArg<int&&>>);
+      static_assert(std::is_same_v<decltype(ar), RefArg<T&&>>);
       EXPECT_EQ(expected, *std::move(ar));
       *a -= 10;
       expected -= 10;
 
       auto ar2 = make_ref(std::move(ar));
-      static_assert(std::is_same_v<decltype(ar2), RefArg<int&&>>);
+      static_assert(std::is_same_v<decltype(ar2), RefArg<T&&>>);
       EXPECT_EQ(expected, *std::move(ar2));
     }
   }
 
-  template <template <typename> class RefArg = capture>
+  template <template <typename> class RefArg = capture, typename T = int>
   void check_ref_from_const(int expected, auto a, auto make_ref) {
     {
       auto ar = make_ref(a);
-      static_assert(std::is_same_v<decltype(ar), RefArg<const int&>>);
+      static_assert(std::is_same_v<decltype(ar), RefArg<const T&>>);
       check_capture_same_address(a, ar);
 
       auto ar2 = make_ref(ar);
-      static_assert(std::is_same_v<decltype(ar2), RefArg<const int&>>);
+      static_assert(std::is_same_v<decltype(ar2), RefArg<const T&>>);
       check_capture_same_address(a, ar2);
 
       auto ar3 = make_ref(std::move(ar2));
-      static_assert(std::is_same_v<decltype(ar3), RefArg<const int&&>>);
+      static_assert(std::is_same_v<decltype(ar3), RefArg<const T&&>>);
       EXPECT_EQ(expected, *std::move(ar3));
     }
     {
       auto ar = make_ref(std::move(a));
-      static_assert(std::is_same_v<decltype(ar), RefArg<const int&&>>);
+      static_assert(std::is_same_v<decltype(ar), RefArg<const T&&>>);
 
       auto ar2 = make_ref(std::move(ar));
-      static_assert(std::is_same_v<decltype(ar2), RefArg<const int&&>>);
+      static_assert(std::is_same_v<decltype(ar2), RefArg<const T&&>>);
       EXPECT_EQ(expected, *std::move(ar2));
     }
   }
@@ -144,54 +145,81 @@ struct CapturesTest : testing::Test {
     check_capture_same_address(a, ar3);
   }
 
-  template <template <typename> class RefFromPreCleanup>
+  template <
+      template <typename>
+      class RefFromAfterCleanup,
+      template <typename>
+      class IndirectRefFromAfterCleanup>
   void check_to_capture_ref(auto make_ref_fn) {
     SimpleCleanup sc;
 
     check_ref_from_mutable(5, make<capture<int>>(5), make_ref_fn);
     check_ref_from_mutable(5, make<capture_heap<int>>(5), make_ref_fn);
-    check_ref_from_mutable(5, make<capture_unique<int>>(5), make_ref_fn);
+    check_ref_from_mutable<capture_indirect, std::unique_ptr<int>>(
+        5,
+        make<capture_indirect<std::unique_ptr<int>>>(std::make_unique<int>(5)),
+        make_ref_fn);
     check_ref_from_cleanup(
         make<co_cleanup_capture<SimpleCleanup>>(sc), make_ref_fn);
 
     // Same, but with a `const` type -- no mutability assertions.
     check_ref_from_const(7, make<capture<const int>>(7), make_ref_fn);
     check_ref_from_const(7, make<capture_heap<const int>>(7), make_ref_fn);
-    check_ref_from_const(7, make<capture_unique<const int>>(7), make_ref_fn);
+    check_ref_from_const<capture_indirect, std::unique_ptr<int>>(
+        7,
+        make<capture_indirect<const std::unique_ptr<int>>>(
+            std::make_unique<int>(7)),
+        make_ref_fn);
     check_ref_from_cleanup<const SimpleCleanup>(
         make<co_cleanup_capture<const SimpleCleanup>>(sc), make_ref_fn);
 
-    // Repeat the above blocks, checking whether we shed `body_only_ref_` from
-    // the ref.  There is no `body_only_ref_co_cleanup_capture`, of course.
+    // Repeat the above blocks, checking whether we shed `after_cleanup_ref_`
+    // from the ref.  There is no `after_cleanup_ref_co_cleanup_capture`, of
+    // course.
 
-    check_ref_from_mutable<RefFromPreCleanup>(
-        5, make<body_only_capture<int>>(5), make_ref_fn);
-    check_ref_from_mutable<RefFromPreCleanup>(
-        5, make<body_only_capture_heap<int>>(5), make_ref_fn);
-    check_ref_from_mutable<RefFromPreCleanup>(
-        5, make<body_only_capture_unique<int>>(5), make_ref_fn);
+    check_ref_from_mutable<RefFromAfterCleanup>(
+        5, make<after_cleanup_capture<int>>(5), make_ref_fn);
+    check_ref_from_mutable<RefFromAfterCleanup>(
+        5, make<after_cleanup_capture_heap<int>>(5), make_ref_fn);
+    check_ref_from_mutable<IndirectRefFromAfterCleanup, std::unique_ptr<int>>(
+        5,
+        make<after_cleanup_capture_indirect<std::unique_ptr<int>>>(
+            std::make_unique<int>(5)),
+        make_ref_fn);
 
-    check_ref_from_const<RefFromPreCleanup>(
-        7, make<body_only_capture<const int>>(7), make_ref_fn);
-    check_ref_from_const<RefFromPreCleanup>(
-        7, make<body_only_capture_heap<const int>>(7), make_ref_fn);
-    check_ref_from_const<RefFromPreCleanup>(
-        7, make<body_only_capture_unique<const int>>(7), make_ref_fn);
+    check_ref_from_const<RefFromAfterCleanup>(
+        7, make<after_cleanup_capture<const int>>(7), make_ref_fn);
+    check_ref_from_const<RefFromAfterCleanup>(
+        7, make<after_cleanup_capture_heap<const int>>(7), make_ref_fn);
+    check_ref_from_const<IndirectRefFromAfterCleanup, std::unique_ptr<int>>(
+        7,
+        make<after_cleanup_capture_indirect<const std::unique_ptr<int>>>(
+            std::make_unique<int>(7)),
+        make_ref_fn);
   }
 };
 
+TEST_F(CapturesTest, indirect__get_underlying) {
+  auto ci = make<capture_indirect<std::unique_ptr<short>>>(
+      std::make_unique<short>(37));
+  auto x = std::move(ci).get_underlying();
+  static_assert(std::is_same_v<decltype(x), std::unique_ptr<short>>);
+  EXPECT_EQ(37, *x);
+}
+
 TEST_F(CapturesTest, to_capture_ref__shared_cleanup) {
   // We set `SharedCleanup == true`, so an input arg type with a
-  // `body_only_ref_` prefix will retain that prefix on the ref.
-  check_to_capture_ref<body_only_capture>([&](auto&& arg) {
-    return shared_cleanup_ref(std::forward<decltype(arg)>(arg));
-  });
+  // `after_cleanup_ref_` prefix will retain that prefix on the ref.
+  check_to_capture_ref<after_cleanup_capture, after_cleanup_capture_indirect>(
+      [&](auto&& arg) {
+        return shared_cleanup_ref(std::forward<decltype(arg)>(arg));
+      });
 }
 
 TEST_F(CapturesTest, to_capture_ref__independent_cleanup) {
   // "Upgrade" behavior: We set `SharedCleanup == false`, so all arg types
-  // emit `capture` refs, even when the input was `body_only_ref_`.
-  check_to_capture_ref<capture>([&](auto&& arg) {
+  // emit `capture` refs, even when the input was `after_cleanup_ref_`.
+  check_to_capture_ref<capture, capture_indirect>([&](auto&& arg) {
     return independent_cleanup_ref(std::forward<decltype(arg)>(arg));
   });
 }
@@ -199,12 +227,13 @@ TEST_F(CapturesTest, to_capture_ref__independent_cleanup) {
 TEST_F(CapturesTest, capture__implicit_ref_conversion) {
   // Implicit conversion to capture refs parallels
   // `to_capture_ref__shared_cleanup` -- we must not upgrade
-  // `body_only_ref_async_arc*` to non-`body_only_ref`, since we're not creating
-  // an independent scope for the new capture ref.
-  check_to_capture_ref<body_only_capture>([&](auto&& arg) {
-    return capture_implicit_ref_t<decltype(arg)>{
-        std::forward<decltype(arg)>(arg)};
-  });
+  // `after_cleanup_ref_async_arc*` to non-`after_cleanup_ref`, since we're not
+  // creating an independent scope for the new capture ref.
+  check_to_capture_ref<after_cleanup_capture, after_cleanup_capture_indirect>(
+      [&](auto&& arg) {
+        return capture_implicit_ref_t<decltype(arg)>{
+            std::forward<decltype(arg)>(arg)};
+      });
 
   // Sample no-abstraction checks -- `check_to_capture_ref` has more coverage
   {
@@ -359,3 +388,5 @@ TEST_F(CapturesTest, customDereference) {
 // and test against it
 
 } // namespace folly::coro::detail
+
+#endif

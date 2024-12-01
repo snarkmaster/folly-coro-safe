@@ -22,6 +22,8 @@
 #include <folly/fibers/Semaphore.h>
 #include <folly/portability/GTest.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 using namespace folly::bindings;
 using namespace std::literals::chrono_literals;
 
@@ -41,8 +43,8 @@ CO_TEST(SafeAsyncScope, noOp) {
 template <typename AScope>
 Task<void> check_schedule() {
   int finalBits = co_await async_closure(
-      [](auto scope,
-         auto bits1) -> ClosureTask<move_after_cleanup<std::atomic_int, int>> {
+      [](auto scope, auto bits1)
+          -> ClosureTask<move_after_cleanup_t<std::atomic_int, int>> {
         static_assert(
             std::is_same_v<decltype(scope), co_cleanup_capture<AScope&>>);
         static_assert(
@@ -87,7 +89,7 @@ Task<void> check_schedule() {
         // XXX schedule a bare CoCleanupSafeTask and ValueTask
 
         // Atomics aren't movable, so convert to `int` after cleanup.
-        co_return move_after_cleanup<std::atomic_int, int>(bits1);
+        co_return move_after_cleanup_as<int>(bits1);
       },
       as_capture(make_in_place<AScope>()),
       // Callbacks will mutate this to affect the outer scope.
@@ -217,8 +219,8 @@ Task<void> checkClosureSuccessDoesNotCancelSubTasks() {
 // This behavior is independent of cancellation policies.
 CO_TEST(SafeAsyncScope, scheduleScopeClosure__recurseOnce) {
   int finalBits = co_await async_closure(
-      [](auto scope,
-         auto bits1) -> ClosureTask<move_after_cleanup<std::atomic_int, int>> {
+      [](auto scope, auto bits1)
+          -> ClosureTask<move_after_cleanup_t<std::atomic_int, int>> {
         scope->with(co_await co_current_executor)
             .scheduleScopeClosure(
                 [](auto outerScope,
@@ -229,14 +231,15 @@ CO_TEST(SafeAsyncScope, scheduleScopeClosure__recurseOnce) {
                           decltype(outerScope),
                           co_cleanup_capture<
                               SafeAsyncScope<CancelViaParent>&>>);
-                  // The `body_only_ref_` prefix is an important consequence
+                  // The `after_cleanup_ref_` prefix is an important consequence
                   // of `outerScope` having `shared_cleanup` safety.  It
                   // stops us scheduling sub-closures with refs to `leet`.
                   //
                   // It's not `int&` because we hit the "no outer coro"
                   // optimization -- the args got moved into the inner coro.
-                  static_assert(
-                      std::is_same_v<decltype(leet), body_only_capture<int>>);
+                  static_assert(std::is_same_v<
+                                decltype(leet),
+                                after_cleanup_capture<int>>);
                   *bits2 += 1;
                   outerScope->with(co_await co_current_executor)
                       .scheduleScopeClosure(
@@ -249,7 +252,7 @@ CO_TEST(SafeAsyncScope, scheduleScopeClosure__recurseOnce) {
                 },
                 bits1,
                 as_capture(1337));
-        co_return move_after_cleanup<std::atomic_int, int>(bits1);
+        co_return move_after_cleanup_as<int>(bits1);
       },
       safeAsyncScope<CancelViaParent>(),
       as_capture(make_in_place<std::atomic_int>(0)));
@@ -257,3 +260,5 @@ CO_TEST(SafeAsyncScope, scheduleScopeClosure__recurseOnce) {
 }
 
 } // namespace folly::coro
+
+#endif

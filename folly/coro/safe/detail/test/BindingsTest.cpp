@@ -18,6 +18,8 @@
 #include <folly/coro/safe/detail/Bindings.h>
 #include <folly/portability/GTest.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 using folly::bindings::by_ref;
 using folly::bindings::constant;
 using folly::bindings::make_in_place;
@@ -133,23 +135,22 @@ constexpr bool check_capture_val_to_ref() {
     check_one<capture<int&&>, safe_alias::co_cleanup_safe_ref>(std::move(av));
   }
 
-  { // makeRef1: auto-upgrade `body_only_capture<Val>` to `capture<Ref>`
-    body_only_capture<int> av{priv, bind_one(5)};
-    check_one_no_shared_cleanup<capture<int&>, safe_alias::co_cleanup_safe_ref>(
+  { // makeRef1: auto-upgrade `after_cleanup_capture<Val>` to `capture<Ref>`
+    after_cleanup_capture<int> av{priv, bind_one(5)};
+    check_one_no_shared_cleanup<capture<int&>, safe_alias::after_cleanup_ref>(
         av);
-    check_one_no_shared_cleanup<
-        capture<int&&>,
-        safe_alias::co_cleanup_safe_ref>(std::move(av));
+    check_one_no_shared_cleanup<capture<int&&>, safe_alias::after_cleanup_ref>(
+        std::move(av));
   }
 
   { // makeRef1: no automatic upgrade due to `shared_cleanup` arg
-    body_only_capture<int> av{priv, bind_one(5)};
+    after_cleanup_capture<int> av{priv, bind_one(5)};
     check_one_shared_cleanup<
-        body_only_capture<int&>,
-        safe_alias::body_only_ref>(av);
+        after_cleanup_capture<int&>,
+        safe_alias::after_cleanup_ref>(av);
     check_one_shared_cleanup<
-        body_only_capture<int&&>,
-        safe_alias::body_only_ref>(std::move(av));
+        after_cleanup_capture<int&&>,
+        safe_alias::after_cleanup_ref>(std::move(av));
   }
 
   { // makeRef2: `by_ref(capture<Val>)` becomes `capture<Ref>`
@@ -176,21 +177,21 @@ constexpr bool check_capture_lref_to_lref() {
     check_one<capture<int&>, safe_alias::co_cleanup_safe_ref>(ar);
   }
 
-  // forwardRef: Upgrade `body_only_capture<V&>` bound as lref
+  // forwardRef: Upgrade `after_cleanup_capture<V&>` bound as lref
   {
     auto lbind_x = bind_one(x);
-    body_only_capture<int&> ar{priv, std::move(lbind_x)};
-    check_one_no_shared_cleanup<capture<int&>, safe_alias::co_cleanup_safe_ref>(
+    after_cleanup_capture<int&> ar{priv, std::move(lbind_x)};
+    check_one_no_shared_cleanup<capture<int&>, safe_alias::after_cleanup_ref>(
         ar);
   }
 
-  // forwardRef: Do NOT upgrade `body_only_capture<V&>`
+  // forwardRef: Do NOT upgrade `after_cleanup_capture<V&>`
   {
     auto lbind_x = bind_one(x);
-    body_only_capture<int&> ar{priv, std::move(lbind_x)};
+    after_cleanup_capture<int&> ar{priv, std::move(lbind_x)};
     check_one_shared_cleanup<
-        body_only_capture<int&>,
-        safe_alias::body_only_ref>(ar);
+        after_cleanup_capture<int&>,
+        safe_alias::after_cleanup_ref>(ar);
   }
 
   // forwardRef: Copy `co_cleanup_capture<V&>` bound as lref
@@ -224,22 +225,20 @@ constexpr bool check_capture_lref_to_rref() {
         capture<int&>{priv, std::move(lbind_x)});
   }
 
-  // forwardRef: Upgrade `body_only_capture<V&>` while moving
+  // forwardRef: Upgrade `after_cleanup_capture<V&>` while moving
   {
     auto lbind_x = bind_one(x);
-    check_one_no_shared_cleanup<
-        capture<int&&>,
-        safe_alias::co_cleanup_safe_ref>(
-        body_only_capture<int&>{priv, std::move(lbind_x)});
+    check_one_no_shared_cleanup<capture<int&&>, safe_alias::after_cleanup_ref>(
+        after_cleanup_capture<int&>{priv, std::move(lbind_x)});
   }
 
-  // forwardRef: Do NOT upgrade `body_only_capture<V&>` while moving
+  // forwardRef: Do NOT upgrade `after_cleanup_capture<V&>` while moving
   {
     auto lbind_x = bind_one(x);
     check_one_shared_cleanup<
-        body_only_capture<int&&>,
-        safe_alias::body_only_ref>(
-        body_only_capture<int&>{priv, std::move(lbind_x)});
+        after_cleanup_capture<int&&>,
+        safe_alias::after_cleanup_ref>(
+        after_cleanup_capture<int&>{priv, std::move(lbind_x)});
   }
 
   // Manual test: Cannot move cleanup arg refs
@@ -266,22 +265,20 @@ constexpr bool check_capture_rref_to_rref() {
         capture<int&&>{priv, std::move(rbind_x)});
   }
 
-  // forwardRef: Upgrade `body_only_capture<V&>` while moving
+  // forwardRef: Upgrade `after_cleanup_capture<V&>` while moving
   {
     auto rbind_x = bind_one(std::move(x));
-    check_one_no_shared_cleanup<
-        capture<int&&>,
-        safe_alias::co_cleanup_safe_ref>(
-        body_only_capture<int&&>{priv, std::move(rbind_x)});
+    check_one_no_shared_cleanup<capture<int&&>, safe_alias::after_cleanup_ref>(
+        after_cleanup_capture<int&&>{priv, std::move(rbind_x)});
   }
 
-  // forwardRef: Do NOT upgrade `body_only_capture<V&>` while moving
+  // forwardRef: Do NOT upgrade `after_cleanup_capture<V&>` while moving
   {
     auto rbind_x = bind_one(std::move(x));
     check_one_shared_cleanup<
-        body_only_capture<int&&>,
-        safe_alias::body_only_ref>(
-        body_only_capture<int&&>{priv, std::move(rbind_x)});
+        after_cleanup_capture<int&&>,
+        safe_alias::after_cleanup_ref>(
+        after_cleanup_capture<int&&>{priv, std::move(rbind_x)});
   }
 
   return true;
@@ -294,3 +291,5 @@ static_assert(check_capture_rref_to_rref());
 // XXX check "`guess_binding_cfg` matched reality" vs "not" branches
 
 } // namespace folly::coro::detail
+
+#endif

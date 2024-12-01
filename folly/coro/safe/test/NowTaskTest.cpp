@@ -18,6 +18,8 @@
 #include <folly/coro/GtestHelpers.h>
 #include <folly/coro/safe/NowTask.h>
 
+#ifndef _WIN32 // Explained in NowTask.h
+
 namespace folly::coro {
 
 NowTask<int> leetTask(int x) {
@@ -67,3 +69,5 @@ CO_TEST(TaskWrapper, cannotDelayAwait) {
 }
 
 } // namespace folly::coro
+
+#endif

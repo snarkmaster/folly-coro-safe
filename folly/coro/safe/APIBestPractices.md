@@ -6,12 +6,14 @@ and why the safest default is either to:
   - Await your coros in the same expression that created them (`NowTask`), or
   - Pass in *only* value arguments (`ValueTask`).
 
-For handling less-structured situations (like deferred & background tasks),
-you're familiar with the toolkit of `SaferCoro.md`.  You know the safety
-benefits of `async_closure()` (and, optionally, `AsyncObject`).  You
-understand the purpose of `capture`s and `AsyncObjectPtr`s, as well as the
-hierarchy of `SafeAlias.h` markings, which determine whether or not you can
-pass references into child closures, or schedule them on `SafeAsyncScope`s.
+For handling less-structured situations (like deferred & background tasks):
+  - You're familiar with the toolkit overview in `SaferCoro.md`.
+  - You know the safety benefits of [`async_closure()`](AsyncClosure.md), and,
+    optionally, `AsyncObject`.
+  - You understand the purpose of `capture`s and `AsyncObjectPtr`s, and how they
+    leverage the hierarchy of `SafeAlias.h` markings to determine whether or not
+    you can pass references into child closures, or schedule them on
+    `SafeAsyncScope`s.
 
 This document will show you idiomatic patterns for safe coro APIs, and
 explain the reasons behind them.  You will learn how to:
@@ -31,8 +33,8 @@ test showcases most of the patterns discussed below.
 ## Which safe coro type do I use?
 
 The first rule of `folly/coro/safe` is that you do **not** write vanilla
-`Task<>`s.  Instead, you will use `NowTask`, or one of a number of type
-aliases from `SafeTask.h`.  Instead, pick the type via this checklist.
+`Task<>`s.  Instead, you will use `NowTask`, or one of a number of type aliases
+from `SafeTask.h`. Pick the type via this checklist.
 
 First, let's handle the common cases:
   - Coro only takes value-semantic types: `ValueTask<T>`.
@@ -50,8 +52,11 @@ For more complex usage, check if your coro benefits from `async_closure()`
 semantics.  Reasons to use it:
   - Some of the coro's arguments need `co_cleanup()` aka async RAII.
     For example, you might be passing `safeAsyncScope<>()` to your coro.
-  - You want to use `capture` ref wrappers to safely pass coro args to
-    child coros that are not `NowTask`.
+  - You want to use `capture` ref wrappers to safely pass objects by-reference
+    to child coros that are not `NowTask`.
+  - You benefit from `async_closure()` auto-upgrading `after_cleanup_capture<>`s
+    to plain `capture<>`s (absent any `shared_cleanup` arguments). For example,
+    this can help nest work with multiple `SafeAsyncScope`s.
   - *(weak)* You want easy syntax for in-place construction of coro args.
   - *(weak)* You want the slightly safer, but less standard, argument binding
     semantics of `folly/lang/Bindings.h`.

@@ -22,6 +22,8 @@
 #include <folly/coro/safe/SafeTask.h>
 #include <folly/fibers/Semaphore.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 /// The `collectAllWindowedAsync()` utility was found "in the wild", and
 /// came in a couple of flavors:
 ///  - A 15-line "naive" version similar in flow to the below, but without
@@ -280,5 +282,7 @@ folly::coro::Task<void> collectAllWindowedAsync(
     co_await std::move(scopeJoin);
   }
 }
+
+#endif
 
 #endif

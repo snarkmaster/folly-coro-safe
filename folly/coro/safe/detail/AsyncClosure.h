@@ -19,6 +19,8 @@
 #include <folly/coro/safe/SafeTask.h>
 #include <folly/coro/safe/detail/Bindings.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 /* XXX
 Read `SaferCoro.md` for an intro. Key points to know when touching this header:
   - `asyncClosure()` wraps its inner awaitable with another scope.  For
@@ -328,7 +330,7 @@ decltype(auto) async_closure_bind_inner_coro_arg(
     static_assert(std::is_same_v<
                   typename Bs::storage_type,
                   std::remove_reference_t<decltype(storage_ref)>>);
-    // `SharedCleanupClosure=true` preserves the `body_only_ref_` prefix of
+    // `SharedCleanupClosure=true` preserves the `after_cleanup_ref_` prefix of
     // the storage type.
     return storage_ref.template to_capture_ref</*shared*/ true>(priv);
   } else if constexpr (
@@ -510,3 +512,5 @@ auto bind_captures_to_closure(auto make_inner_coro, auto&&... args) {
 }
 
 } // namespace folly::coro::detail
+
+#endif

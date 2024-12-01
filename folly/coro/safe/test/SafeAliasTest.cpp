@@ -57,19 +57,19 @@ TEST(SafeAliasTest, safety_ordering) {
       safe_alias_of_v<std::tuple<
           X,
           int,
-          manual_safe_ref_t<SA::body_only_ref, int>,
+          manual_safe_ref_t<SA::after_cleanup_ref, int>,
           manual_safe_ref_t<SA::co_cleanup_safe_ref, int>>> ==
-      SA::body_only_ref);
+      SA::after_cleanup_ref);
   static_assert(
       safe_alias_of_v<std::tuple<
           int,
-          manual_safe_ref_t<SA::body_only_ref, int>,
+          manual_safe_ref_t<SA::after_cleanup_ref, int>,
           manual_safe_ref_t<SA::shared_cleanup, int>>> == SA::shared_cleanup);
   static_assert(
       safe_alias_of_v<std::tuple<
           X,
           int,
-          manual_safe_ref_t<SA::body_only_ref, bool>,
+          manual_safe_ref_t<SA::after_cleanup_ref, bool>,
           int&>> == SA::unsafe);
 }
 
@@ -92,20 +92,20 @@ TEST(SafeAliasTest, manual_safe_ref) {
   int* x = nullptr;
   auto r1 = manual_safe_ref(x);
   auto r2 = manual_safe_ref<safe_alias::co_cleanup_safe_ref>(x);
-  auto r3 = manual_safe_ref<safe_alias::body_only_ref>(x);
+  auto r3 = manual_safe_ref<safe_alias::after_cleanup_ref>(x);
   static_assert(safe_alias_of_v<decltype(x)> == SA::unsafe);
   static_assert(safe_alias_of_v<decltype(r1)> == SA::maybe_value);
   static_assert(safe_alias_of_v<decltype(r2)> == SA::co_cleanup_safe_ref);
-  static_assert(safe_alias_of_v<decltype(r3)> == SA::body_only_ref);
+  static_assert(safe_alias_of_v<decltype(r3)> == SA::after_cleanup_ref);
 }
 
 TEST(SafeAliasTest, manual_safe_val) {
   int* x = nullptr;
   auto r1 = manual_safe_val(x);
   auto r2 = manual_safe_val<safe_alias::co_cleanup_safe_ref>(x);
-  auto r3 = manual_safe_val<safe_alias::body_only_ref>(x);
+  auto r3 = manual_safe_val<safe_alias::after_cleanup_ref>(x);
   static_assert(safe_alias_of_v<decltype(x)> == SA::unsafe);
   static_assert(safe_alias_of_v<decltype(r1)> == SA::maybe_value);
   static_assert(safe_alias_of_v<decltype(r2)> == SA::co_cleanup_safe_ref);
-  static_assert(safe_alias_of_v<decltype(r3)> == SA::body_only_ref);
+  static_assert(safe_alias_of_v<decltype(r3)> == SA::after_cleanup_ref);
 }

@@ -23,6 +23,8 @@
 #include <folly/Utility.h>
 #include <folly/lang/Bindings.h>
 
+#ifndef _WIN32 // Explained in folly/lang/Bindings.h
+
 /*
 XXX first work on async closure bindings
 
@@ -141,3 +143,5 @@ class binding_policy_impl<BI, Binding> {
   using signature_type = typename decltype(signature_type_for(Tag{}))::type;
 };
 } // namespace folly::bindings::detail
+
+#endif

@@ -19,6 +19,9 @@
 #include <folly/coro/Baton.h>
 #include <folly/coro/safe/AsyncClosure.h>
 #include <folly/coro/safe/SafeAsyncScope.h>
+
+#ifndef _WIN32 // Explained in SafeTask.h
+
 namespace folly::coro {
 
 class AsyncObject;
@@ -185,7 +188,7 @@ class AsyncObjectSlotTag;
 /// `co_cleanup_capture()
 //
 /// XXX unless you elect a restricted ref, the safety of these methods will
-/// be at most `shared_cleanup` or `body_only_ref` because the refs safety
+/// be at most `shared_cleanup` or `after_cleanup_ref` because the refs safety
 /// isn't backgroundable
 ///
 ///  => XXX fold in the  decent writing from the .md here (shared_ptr,
@@ -279,7 +282,7 @@ class AsyncObject : NonCopyableNonMovable {
   //    non-cleanup closure arg.
   //  - `slot()` retrieval should always allow access to non-cleanup slots.
   //  - The `safe_alias_for_` markings for non-cleanup `AsyncObject*` types
-  //    would be different (i.e. `shared_cleanup` -> `body_only_ref`)
+  //    would be different (i.e. `shared_cleanup` -> `after_cleanup_ref`)
   //  - Etc.
   //
   // Future: Similarly, we could support `RestrictedSlot`s, which would ONLY
@@ -800,7 +803,7 @@ namespace folly::detail {
 //     of an outer async scope, so we need `shared_cleanup`.
 // (2) Moving the pointer out of the lexical scope of its "destructor async
 //     scope" is guaranteed to cause a deadlock on `join`.  This constraint
-//     is weaker than (1), `<= body_only_ref` prevents deadlock:
+//     is weaker than (1), `<= after_cleanup_ref` prevents deadlock:
 //       - Cannot return it from a closure.
 //       - Cannot pass it to a sub-closure being scheduled on a scope.
 // (3) Since we're moving the ptr inside the closure, there's no risk
@@ -809,3 +812,5 @@ template <typename T>
 struct safe_alias_for_<::folly::coro::AsyncObjectPtr<T>>
     : safe_alias_constant<safe_alias::shared_cleanup> {};
 } // namespace folly::detail
+
+#endif

@@ -18,6 +18,14 @@
 
 #include <folly/coro/TaskWrapper.h>
 
+// It looks like some in-use versions of MSVC don't support non-copiable
+// coroutines at all. Example errors:
+//   NowTaskTest.cpp:23:14: error: call to implicitly-deleted copy
+//                          constructor of 'NowTask<int>'
+//   NowTask<int> leetTask(int x) {
+//                ^~~~~~~~
+#ifndef _WIN32
+
 namespace folly::coro {
 
 template <typename>
@@ -63,3 +71,5 @@ struct FOLLY_CORO_TASK_ATTRS NowTask final
 };
 
 } // namespace folly::coro
+
+#endif

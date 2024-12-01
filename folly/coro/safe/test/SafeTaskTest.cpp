@@ -20,6 +20,8 @@
 #include <folly/fibers/Semaphore.h>
 #include <folly/portability/GTest.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 using namespace folly;
 using namespace folly::coro;
 using namespace std::literals::chrono_literals;
@@ -36,7 +38,7 @@ TEST(SafeTask, isSafeTaskValid) {
   using folly::coro::detail::IsSafeTaskValid;
   constexpr auto kVal = safe_alias::maybe_value;
   constexpr auto kPost = safe_alias::co_cleanup_safe_ref;
-  constexpr auto kPre = safe_alias::body_only_ref;
+  constexpr auto kPre = safe_alias::after_cleanup_ref;
 
   // Without an implicit object parameter
   static_assert(IsSafeTaskValid<kVal, int, int>);
@@ -69,7 +71,8 @@ TEST(SafeTask, isSafeTaskValid) {
   static_assert(!IsSafeTaskValid<kVal, int, decltype(badTmpl)&, int>);
   static_assert(!IsSafeTaskValid<kVal, int, const decltype(badTmpl)&, int>);
 
-  // safe_alias::body_only_ref relaxes constraint on args, but not return val
+  // safe_alias::after_cleanup_ref relaxes constraint on args, but not return
+  // val
   static_assert(IsSafeTaskValid<kPre, int, manual_safe_ref_t<kPre, int>>);
   static_assert(IsSafeTaskValid<kPre, int, manual_safe_ref_t<kPost, int>>);
   static_assert(!IsSafeTaskValid<kPre, int, int*>);
@@ -93,8 +96,8 @@ TEST(SafeTask, isSafeTaskValid) {
 TEST(SafeTask, safe_alias_of_v) {
   static_assert(safe_alias_of_v<ValueTask<int>> == safe_alias::maybe_value);
   static_assert(
-      safe_alias_of_v<SafeTask<safe_alias::body_only_ref, int>> ==
-      safe_alias::body_only_ref);
+      safe_alias_of_v<SafeTask<safe_alias::after_cleanup_ref, int>> ==
+      safe_alias::after_cleanup_ref);
 }
 
 CO_TEST(SafeTask, trivial) {
@@ -112,10 +115,11 @@ CO_TEST(CoCleanupSafeTask, trivial) {
 
 CO_TEST(PreCleanupTask, trivial) {
   int x = 37;
-  auto t = [](auto x) -> SafeTask<safe_alias::body_only_ref, int> {
+  auto t = [](auto x) -> SafeTask<safe_alias::after_cleanup_ref, int> {
     co_return 1300 + x;
   };
-  EXPECT_EQ(1337, co_await t(manual_safe_ref<safe_alias::body_only_ref>(x)));
+  EXPECT_EQ(
+      1337, co_await t(manual_safe_ref<safe_alias::after_cleanup_ref>(x)));
   EXPECT_EQ(
       1337, co_await t(manual_safe_ref<safe_alias::co_cleanup_safe_ref>(x)));
   EXPECT_EQ(1337, co_await t(manual_safe_ref(x)));
@@ -251,3 +255,5 @@ CO_TEST(SafeTask, scheduleOnSafe) {
 }
 
 } // namespace folly::coro::detail
+
+#endif

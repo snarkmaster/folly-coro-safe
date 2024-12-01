@@ -17,6 +17,8 @@
 #include <folly/lang/named/Bindings.h>
 #include <folly/portability/GTest.h>
 
+#ifndef _WIN32 // Explained in folly/lang/Bindings.h
+
 //
 // IMPORTANT: This is intended to parallel `folly/lang/test/BindingsTest.cpp`!
 // To reduce redundancy, we don't repeat some of the tests here.
@@ -260,3 +262,5 @@ constexpr auto check_in_place_binding_signature_type() {
 }
 
 static_assert(check_in_place_binding_signature_type());
+
+#endif

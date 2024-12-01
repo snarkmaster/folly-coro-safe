@@ -20,6 +20,8 @@
 
 #include <folly/coro/safe/Captures.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 namespace folly::coro {
 class AsyncObject;
 class AsyncScopeSlotObject;
@@ -89,11 +91,11 @@ struct async_closure_scope_self_ref_hack {
 // `capture_binding_helper` has 3 types of per-argument binding rules:
 //   "own": `as_capture()` bindings, for which this closure owns storage.
 //       If this new closure does has "shared cleanup", this branch will
-//       emit `body_only_capture*<T>` types.  `T` will be a reference
+//       emit `after_cleanup_capture*<T>` types.  `T` will be a reference
 //       for closures with an outer coro, and a value otherwise.
 //   "pass": Pass preexisting `capture`s (NOT owned by this closure).  If
 //       this new closure has "independent cleanup", this branch will drop
-//       the `body_only_ref_` prefix from the `capture` type. Sub-cases:
+//       the `after_cleanup_ref_` prefix from the `capture` type. Sub-cases:
 //         - "pass.makeRef": Transform `capture<Val>` to `capture<Ref>`.
 //         - "pass.forwardRef": Pass `capture<Ref>` by-value.
 //             * Copy `capture<Ref>` bound as lval ref
@@ -102,25 +104,25 @@ struct async_closure_scope_self_ref_hack {
 //   "regular": Other arguments use `folly/lang/Bindings.h` semantics.
 //
 // These value types can be stored on an outer coro:
-//   capture<V>, body_only_capture<V>
-//   capture_unique<V>, body_only_capture_unique<V>
+//   capture<V>, after_cleanup_capture<V>
+//   capture_indirect<V>, after_cleanup_capture_indirect<V>
 //   co_cleanup_capture<V>
 //   restricted_co_cleanup_capture<V> -- add later via below "Future:" notes
 //
 // These value types can be moved into an inner coro:
-//   capture<V>, body_only_capture<V>
-//   capture_unique<V>, body_only_capture_unique<V>
-//   capture_heap<V>, body_only_capture_heap<V> -- for `make_in_place*`
+//   capture<V>, after_cleanup_capture<V>
+//   capture_indirect<V>, after_cleanup_capture_indirect<V>
+//   capture_heap<V>, after_cleanup_capture_heap<V> -- for `make_in_place*`
 //
 // These reference types can be passed to the inner coro:
-//   capture <T&> or <T&&>, body_only_capture <T&> or <T&&>
+//   capture <T&> or <T&&>, after_cleanup_capture <T&> or <T&&>
 //   co_cleanup_capture<T&>
 //   restricted_co_cleanup_capture<T&> -- add later via below "Future:" notes
 //
 // The full correspondence between value & reference types is specified in
 // `to_capture_ref()` from `Captures.h`.  In short, the cleanup value
 // types map to the eponymous reference types.  Non-cleanup types all map to
-// `capture` or `body_only_capture`, following the shared-cleanup
+// `capture` or `after_cleanup_capture`, following the shared-cleanup
 // closure rules.
 struct binding_helper_cfg {
   bool is_shared_cleanup_closure;
@@ -158,7 +160,7 @@ class capture_binding_helper {
       if constexpr (std::is_lvalue_reference_v<typename B::binding_type>) {
         // `check_capture_lref_to_lref`: We're storing an `capture<Ref>`
         // by-value, and it's bound to the input by lval ref.  `b` will either
-        // copy the `capture<Ref>`, or upgrade `body_only_capture`.
+        // copy the `capture<Ref>`, or upgrade `after_cleanup_capture`.
 
         static_assert( // Improve errors over just "deleted copy ctor".
             !std::is_rvalue_reference_v<ArgT>,
@@ -241,23 +243,24 @@ class capture_binding_helper {
       static_assert(Cfg.has_outer_coro);
       // Future: Add a toggle to emit `restricted_co_cleanup_capture`
       return store_as<co_cleanup_capture<ST>>(std::move(b));
-    } else if constexpr (B::bind_info.capture_p == capture_projection::unique) {
+    } else if constexpr (
+        B::bind_info.capture_p == capture_projection::indirect) {
       if constexpr (Cfg.is_shared_cleanup_closure) {
-        return store_as<body_only_capture_unique<ST>>(std::move(b));
+        return store_as<after_cleanup_capture_indirect<ST>>(std::move(b));
       } else {
-        return store_as<capture_unique<ST>>(std::move(b));
+        return store_as<capture_indirect<ST>>(std::move(b));
       }
     } else if constexpr (
         !Cfg.has_outer_coro &&
         folly::bindings::detail::is_in_place_binding_v<B>) {
       if constexpr (Cfg.is_shared_cleanup_closure) {
-        return store_as<body_only_capture_heap<ST>>(std::move(b));
+        return store_as<after_cleanup_capture_heap<ST>>(std::move(b));
       } else {
         return store_as<capture_heap<ST>>(std::move(b));
       }
     } else {
       if constexpr (Cfg.is_shared_cleanup_closure) {
-        return store_as<body_only_capture<ST>>(std::move(b));
+        return store_as<after_cleanup_capture<ST>>(std::move(b));
       } else {
         return store_as<capture<ST>>(std::move(b));
       }
@@ -272,8 +275,8 @@ class capture_binding_helper {
     } else { // Bindings for arguments the closure does NOT store.
       // Without `as_capture`, the argument will require a copy or a move
       // to be passed to the inner task (which the type may not support).
-      // If `as_capture` isn't appropraite, the user can also work around
-      // the issue via `std::make_unique<TheirType>`.
+      // If `as_capture` isn't appropriate, the user can also work around
+      // that via `std::make_unique<TheirType>` and/or `capture_indirect`.
       static_assert(
           !folly::bindings::detail::is_in_place_binding_v<B>,
           "Did you mean `as_capture(make_in_place<T>(...))`?");
@@ -319,7 +322,13 @@ class capture_binding_helper {
 // wrappers for on-closure stored values `unsafe` anyway to discourage users
 // from moving them from the original closure.  And, the wrappers themselves
 // check the safety of the underlying type (via `capture_safety`).
-template <bool IncludeRefHack, auto Cfg, typename TransformedBindingList>
+//
+// The doc in `scheduleScopeClosure()` justifies why our first call to this
+// function includes `ref_hack` args in the measurement (we want the
+// closure's own args downgraded to `after_cleanup_ref` safety), but not in
+// the second (we don't want the emitted `SafeTask` to be knocked down to
+// `shared_cleanup` safety, since that would make it unschedulable).
+template <bool IncludeRefHack, typename TransformedBindingList>
 constexpr auto vtag_safety_of_non_stored_args() {
   return []<typename... T>(tag_t<T...>) {
     return value_list_concat_t<
@@ -373,11 +382,10 @@ constexpr auto transform_capture_bindings(auto&&... args) {
   auto bind_tup = folly::bindings::ensure_binding_tuple(
       std::forward<decltype(args)>(args)...);
 
-  // Future: If there are many `make_in_place` arguments that aren't
-  // `as_capture_unique` (and thus require `*capture_heap`), it may be
-  // more efficient to auto-select an outer coro with just 2 heap
-  // allocations.  Beware: this changes user-facing types (`*capture_heap`
-  // to `*capture`), but most users shouldn't depend on this.
+  // Future: If there are many `make_in_place` arguments (which require
+  // `capture_heap`), it may be more efficient to auto-select an outer coro,
+  // for just 2 heap allocations.  Beware: this changes user-facing types
+  // (`*capture_heap` to `*capture`), but most users shouldn't depend on it.
   constexpr bool has_outer_coro =
       ForceOuterCoro || []<typename... Bs>(const std::tuple<Bs...>&) {
         // XXX add a test making sure we don't over match on
@@ -389,17 +397,28 @@ constexpr auto transform_capture_bindings(auto&&... args) {
       }(bind_tup);
 
   // Figure out `IsSharedCleanupClosure` for `binding_cfg` for the real
-  // `transform_binding` call.  Whether we guesss `true` or `false` here,
-  // this will not affect the presence of `shared_cleanup` in the vtag,
-  // since this boolean only picks between `{,body_only_ref_}capture*`, with
-  // either `body_only_ref` or `co_cleanup_safe_ref` safety.
-  constexpr binding_helper_cfg guess_binding_cfg{
-      .is_shared_cleanup_closure = false, .has_outer_coro = has_outer_coro};
-  using guess_transformed_binding_types = decltype(std::apply(
+  // `transform_binding` call.
+  //
+  // Our choice of `is_shared_cleanup_closure = true` is important since we
+  // reuse this type list for the returned `vtag_safety_of_non_stored_args`.
+  // That vtag is used by `async_closure()` to compute the safety level for
+  // the resulting `SafeTask`.  This safety must NOT be increased by
+  // reference upgrades -- a reference's safety is only upgraded inside the
+  // child closure, but the original safety applies in the parent closure,
+  // which is where the returned `vtag` is consumed.
+  //
+  // Choosing `true` does not affect the presence of `shared_cleanup` in the
+  // vtag -- this just picks between `{,after_cleanup_ref_}capture*`, with
+  // either `after_cleanup_ref` or `co_cleanup_safe_ref` safety.
+  using shared_cleanup_transformed_binding_types = decltype(std::apply(
       [&](auto... bs) {
-        return tag_t<
-            decltype(capture_binding_helper<decltype(bs), guess_binding_cfg>::
-                         transform_binding(std::move(bs)))...>{};
+        return tag_t<decltype(capture_binding_helper<
+                              decltype(bs),
+                              binding_helper_cfg{
+                                  .is_shared_cleanup_closure = true,
+                                  .has_outer_coro = has_outer_coro}
+
+                              >::transform_binding(std::move(bs)))...>{};
       },
       std::move(bind_tup)));
 
@@ -411,9 +430,8 @@ constexpr auto transform_capture_bindings(auto&&... args) {
           (safe_alias::shared_cleanup ==
            folly::detail::least_safe_alias( //
                vtag_safety_of_non_stored_args<
-                   true,
-                   guess_binding_cfg,
-                   guess_transformed_binding_types>())),
+                   /*IncludeRefHack*/ true,
+                   shared_cleanup_transformed_binding_types>())),
       .has_outer_coro = has_outer_coro};
   auto res_tup = std::apply(
       [&](auto... bs) {
@@ -422,22 +440,13 @@ constexpr auto transform_capture_bindings(auto&&... args) {
       },
       std::move(bind_tup));
 
-  if constexpr (guess_binding_cfg == binding_cfg) {
-    // This branch is just to avoid the `type_list_concat_t` conversion below.
-    return std::pair{
-        vtag_safety_of_non_stored_args<
-            false,
-            binding_cfg,
-            guess_transformed_binding_types>(),
-        std::move(res_tup)};
-  } else {
-    return std::pair{
-        vtag_safety_of_non_stored_args<
-            false,
-            binding_cfg,
-            type_list_concat_t<tag_t, decltype(res_tup)>>(),
-        std::move(res_tup)};
-  }
+  return std::pair{
+      vtag_safety_of_non_stored_args<
+          /*IncludeRefHack*/ false,
+          shared_cleanup_transformed_binding_types>(),
+      std::move(res_tup)};
 }
 
 } // namespace folly::coro::detail
+
+#endif

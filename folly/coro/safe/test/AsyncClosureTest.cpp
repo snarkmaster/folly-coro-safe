@@ -19,6 +19,8 @@
 #include <folly/coro/safe/AsyncClosure.h>
 #include <folly/fibers/Semaphore.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 using namespace folly;
 using namespace folly::coro;
 using namespace folly::bindings;
@@ -69,9 +71,9 @@ void checkSafety() {
       [](auto) -> ClosureTask<void> { co_return; },
       manual_safe_ref<safe_alias::co_cleanup_safe_ref>(x));
   checkIsSafe(
-      safe_alias_constant<safe_alias::body_only_ref>{},
+      safe_alias_constant<safe_alias::after_cleanup_ref>{},
       [](auto) -> ClosureTask<void> { co_return; },
-      manual_safe_ref<safe_alias::body_only_ref>(x));
+      manual_safe_ref<safe_alias::after_cleanup_ref>(x));
 
   auto checkIsUnsafe = [&](auto fn, auto&&... args) {
     auto s = safeWrap(std::move(fn), std::forward<decltype(args)>(args)...);
@@ -332,8 +334,9 @@ CO_TEST(AsyncClosure, nestedRefsWithOuterCoro) {
                           decltype(y),
                           const capture<const std::unique_ptr<int>&>>);
             assertArgConst(y);
-            static_assert(
-                std::is_same_v<decltype(z), const capture<const int&>>);
+            static_assert(std::is_same_v<
+                          decltype(z),
+                          const capture_indirect<const std::unique_ptr<int>&>>);
             *x += 100;
             co_await asyncClosureCheckType<CoCleanupSafeTask<void>>(
                 [](auto x2, auto y2, auto z2) -> ClosureTask<void> {
@@ -342,8 +345,9 @@ CO_TEST(AsyncClosure, nestedRefsWithOuterCoro) {
                                 decltype(y2),
                                 capture<const std::unique_ptr<int>&>>);
                   assertArgConst(y2);
-                  static_assert(
-                      std::is_same_v<decltype(z2), capture<const int&>>);
+                  static_assert(std::is_same_v<
+                                decltype(z2),
+                                capture_indirect<const std::unique_ptr<int>&>>);
                   *x2 += 100; // ref remains non-const -- C++ arg semantics
                   co_return;
                 },
@@ -357,7 +361,9 @@ CO_TEST(AsyncClosure, nestedRefsWithOuterCoro) {
                             decltype(y3),
                             capture<const std::unique_ptr<int>&>>);
               assertArgConst(y3);
-              static_assert(std::is_same_v<decltype(z3), capture<const int&>>);
+              static_assert(std::is_same_v<
+                            decltype(z3),
+                            capture_indirect<const std::unique_ptr<int>&>>);
               *x3 += 100; // ref remains non-const -- C++ arg semantics
               co_return;
             }(x, y, z);
@@ -365,7 +371,7 @@ CO_TEST(AsyncClosure, nestedRefsWithOuterCoro) {
           },
           as_capture(
               make_in_place<int>(1000), constant(std::make_unique<int>(23))),
-          as_capture_unique(constant(14)));
+          as_capture_indirect(constant(std::make_unique<int>(14))));
   EXPECT_EQ(1337, res);
 }
 
@@ -385,14 +391,18 @@ CO_TEST(AsyncClosure, nestedRefsWithoutOuterCoro) {
       /*force outer*/ false>(
       [](auto x, auto y, auto z) -> ClosureTask<int> {
         static_assert(std::is_same_v<decltype(x), capture_heap<int>>);
-        static_assert(std::is_same_v<decltype(z), capture_unique<const int>>);
+        static_assert(std::is_same_v<
+                      decltype(z),
+                      capture_indirect<std::unique_ptr<const int>>>);
         *x += 100;
         co_await asyncClosureCheckType<CoCleanupSafeTask<void>>(
             [](auto x2, auto y2, auto z2) -> ClosureTask<void> {
               static_assert(std::is_same_v<decltype(x2), capture<int&>>);
               static_assert(
                   std::is_same_v<decltype(y2), capture<std::unique_ptr<int>&>>);
-              static_assert(std::is_same_v<decltype(z2), capture<const int&>>);
+              static_assert(std::is_same_v<
+                            decltype(z2),
+                            capture_indirect<std::unique_ptr<const int>&>>);
               *x2 += 100; // ref remains non-const -- C++ arg semantics
               co_return;
             },
@@ -402,7 +412,8 @@ CO_TEST(AsyncClosure, nestedRefsWithoutOuterCoro) {
         // Can pass implicitly converted `capture<Ref>`s into a SafeTask
         co_await [](capture<int&> x3,
                     capture<std::unique_ptr<int>&> y3,
-                    capture<const int&>) -> CoCleanupSafeTask<void> {
+                    capture_indirect<std::unique_ptr<const int>&>)
+                     -> CoCleanupSafeTask<void> {
           *x3 += 50;
           *(*y3) += 50;
           co_return;
@@ -410,7 +421,8 @@ CO_TEST(AsyncClosure, nestedRefsWithoutOuterCoro) {
         co_return *x + **y + *z;
       },
       as_capture(make_in_place<int>(1000), std::make_unique<int>(23)),
-      as_capture_unique(constant(14)));
+      // Can't use `constant()` here because we can't move a `const unique_ptr`.
+      as_capture_indirect(std::make_unique<const int>(14)));
   EXPECT_EQ(1337, res);
 }
 
@@ -557,7 +569,7 @@ outer: ref to stored, ref to ancestor, plain
 inner: stored, ref to ancestor, plain
 cover lval and rval refs
 
-XXX test shared_cleanup downgrade, making body_only_ref_ args
+XXX test shared_cleanup downgrade, making after_cleanup_ref_ args
 
 XXX named type sigs should support defaults soonish
   => orthogonal to namedness, really
@@ -593,3 +605,5 @@ CO_TEST(AsyncClosure, memberTask) {
           },
           as_capture(HasMemberTask{})));
 }
+
+#endif

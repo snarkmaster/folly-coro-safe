@@ -18,6 +18,8 @@
 #include <folly/coro/safe/AfterCleanup.h>
 #include <folly/coro/safe/AsyncScopeObject.h>
 
+#ifndef _WIN32 // Explained in SafeTask.h
+
 using namespace folly::bindings;
 
 namespace folly::coro {
@@ -74,7 +76,7 @@ class Foo : public AsyncScopeObject<CancelViaParent> {
 CO_TEST(AsyncScopeObject, FooOnScope) {
   int sum = co_await async_closure(
       [](auto scope,
-         auto sum) -> ClosureTask<move_after_cleanup<std::atomic_int, int>> {
+         auto sum) -> ClosureTask<move_after_cleanup_t<std::atomic_int, int>> {
         auto* exec = co_await co_current_executor;
         auto foo = asyncObjectPtr<Foo>(scope->with(exec), 100, 30, sum);
         // NB: `foo->scope(foo)` is also acceptable style, since for custom
@@ -101,7 +103,7 @@ CO_TEST(AsyncScopeObject, FooOnScope) {
               co_return;
             },
             sum));
-        co_return move_after_cleanup<std::atomic_int, int>(sum);
+        co_return move_after_cleanup_as<int>(sum);
       },
       safeAsyncScope<CancelViaParent>(),
       as_capture(make_in_place<std::atomic_int>(1000)));
@@ -126,6 +128,8 @@ CO_TEST(AsyncScopeObject, FooOnClosure) {
 // XXX test simple AsyncScopeObject
 // XXX test AsyncScopeObject + extra 1, 2 slots
 // XXX test AsyncScopeObject scheduleSelfClosure
-// XXX test body_only_ref_ downgrade
+// XXX test after_cleanup_ref_ downgrade
 
 } // namespace folly::coro
+
+#endif

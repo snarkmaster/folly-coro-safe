@@ -67,7 +67,7 @@ appetite, here's a small demo:
 
 ```cpp
 assert(1337 == co_await async_closure([](auto scope, auto n)
-      -> ClosureTask<move_after_cleanup<std::atomic_int, int>> {
+      -> ClosureTask<move_after_cleanup_t<std::atomic_int, int>> {
     n->fetch_add(1000);
     // Immediate sub-task: takes `scope` and `n` by-reference.
     co_await async_closure([](auto scope, auto n) -> ClosureTask<void> {
@@ -88,7 +88,7 @@ assert(1337 == co_await async_closure([](auto scope, auto n)
           }, /*`scope` is implied, */ n);
     }, scope, n);
     // Atomics aren't movable, so convert to `int` after cleanup.
-    co_return move_after_cleanup<std::atomic_int, int>(n);
+    co_return move_after_cleanup_as<int>(n);
   },
   safeAsyncScope<CancelViaParent>(),
   // Mutated by sub-tasks & returned after cleanup.
@@ -118,9 +118,9 @@ For the details, read `Captures.md` and `Captures.h`. Briefly, `capture`s are a 
 When possible, use `auto` in signatures taking `capture`s. Code rarely cares what flavor of `capture` it has, and all of them dereference the same way.
 
 There are two exceptions where the API isn't quite the same -- but even then, the differences aren't large enough to avoid `auto`.
-  - `as_capture_unique()` special-cases passing `unique_ptr`s into captures, so
-    that the closure code doesn't have to dereference twice. So, the
-    `capture_unique<Value>` types are the only ones that are nullable.
+  - `as_capture_indirect()` special-cases passing dereferenceable captures
+    (`optional`, `unique_ptr`, etc), so the inner coro doesn't have to
+    dereference twice. The `capture_indirect` types are the only nullable ones.
   - `co_cleanup_capture<T>` types deliberately forbid rvalue reference `T`. You will
     probably never encounter this.
 
@@ -151,9 +151,33 @@ then it has to create an additional "outer" coroutine frame to handle errors and
 await cleanup. This cost should be roughly equivalent to that of
 `co_scope_exit`, but much easier to use, and much harder to misuse.
 
+## Emulating non-block scopes with `capture_indirect<>`
+
+Sometimes you can only initialize a value mid-way through the scope. If you
+**also** need for this value to be a `capture<>`, consider this pattern:
+
+```cpp
+co_await async_closure([](auto scope, auto optFoo) {
+      optFoo.get_underlying().emplace(co_await makeFoo());
+      scope.with(co_await co_current_executor).schedule(
+        [](auto optFoo) -> CoCleanupSafeTask<void> { ... }(optFoo));
+    },
+    safeAsyncScope<CancelViaParent>(),
+    as_capture_indirect(std::optional<Foo>{}));
+```
+
+This also works with `unique_ptr`. But, today's implementation has deficiencies:
+  - No support for `co_cleanup()`
+  - No way to obtain a non-nullable ref once the capture is initialized.
+
+If these affect you, check out "Better non-block scope emulation" in `FutureWork.md`.
+
 ## But what does it actually *do*?
 
-In pseudo-C++, a closure with async RAII support looks like this:
+`SafeAliasAndClosure.md` walks you through the lifecycle of a couple of
+`async_closure()`s. That might be a good starting point.
+
+In pseudo-C++, a closure with async RAII support could be implemented like this:
 
 ```cpp
 auto async_closure(auto make_inner_task, auto&&... args) {
