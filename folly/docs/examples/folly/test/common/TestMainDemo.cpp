@@ -14,25 +14,25 @@
  * limitations under the License.
  */
 
-#include <folly/memory/MallctlHelper.h>
+/**
+ * This file demonstrates the usage of folly/test/common:test_main_lib,
+ * which is a `main` implementation that initializes gtest & folly before
+ * running tests.
+ * @file
+ */
 
-#include <folly/Format.h>
-#include <folly/String.h>
-#include <folly/lang/Exception.h>
+#include <folly/Singleton.h>
 
-#include <stdexcept>
+#include <gtest/gtest.h>
 
-namespace folly {
+using namespace ::testing;
 
-namespace detail {
+namespace {
+/// This is a singleton that demonstrates folly will be initialized by
+/// `//folly/test/common:test_main_lib`.
+folly::Singleton<int> DemoSingleton([]() { return new int(42); });
+} // namespace
 
-[[noreturn]] void handleMallctlError(const char* fn, const char* cmd, int err) {
-  assert(err != 0);
-  cmd = cmd ? cmd : "<none>";
-  throw_exception<std::runtime_error>(
-      sformat("mallctl[{}] {}: {} ({})", fn, cmd, errnoStr(err), err));
+TEST(TestMainDemo, SingletonAccess) {
+  ASSERT_EQ(*DemoSingleton.try_get(), 42);
 }
-
-} // namespace detail
-
-} // namespace folly
