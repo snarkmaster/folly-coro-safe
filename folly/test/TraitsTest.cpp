@@ -506,9 +506,9 @@ TEST(Traits, like) {
   static_assert(std::is_same_v<like_t<int&&, char>, char&&>);
   static_assert(std::is_same_v<like_t<int const&&, char>, char const&&>);
   static_assert(std::is_same_v<like_t<int volatile&&, char>, char&&>);
-  static_assert(
-      std::
-          is_same_v<like_t<int const&&, char volatile>, char const volatile&&>);
+  static_assert( //
+      std::is_same_v< //
+          like_t<int const&&, char volatile>, char const volatile&&>);
   // Check we don't strip underlying `const` from `Dst`
   static_assert(std::is_same_v<like_t<int, const char>, const char>);
   static_assert(std::is_same_v<like_t<int, const char&>, const char>);

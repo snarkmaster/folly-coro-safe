@@ -259,6 +259,58 @@ CO_TEST(SafeAsyncScope, scheduleScopeClosure__recurseOnce) {
   EXPECT_EQ(3, finalBits);
 }
 
+struct WorkItem {
+  Task<bool> isRequired() { co_return false; }
+};
+WorkItem iAmMandatory() {
+  return {};
+}
+WorkItem nonNegotiable() {
+  return {};
+}
+WorkItem bigwigInterest() {
+  return {};
+}
+WorkItem canDoThisLater() {
+  return {};
+}
+
+CoCleanupSafeTask<void> doWork(WorkItem) {
+  co_return;
+}
+ClosureTask<void> doOptionalWork(
+    co_cleanup_capture<SafeAsyncScope<CancelOnExitOrRequest>&> optionalScope,
+    WorkItem item) {
+  if (co_await item.isRequired()) { // Last-minute escalation?
+    // We can't use `requiredScope` here since that might have already been
+    // joined.  Instead, make the newly-required task non-cancelable on
+    // `optionalScope`, which is kept alive by the current coro.  Note: It
+    // would also be valid to plumb through the "parent closure" token here.
+    optionalScope->with(co_await co_current_executor)
+        .schedule(
+            co_withCancellation(CancellationToken{}, doWork(std::move(item))));
+  } else {
+    co_await doWork(std::move(item));
+  }
+}
+
+// This acts as a reminder to update the code in `LifetimeSafetyBenefits.md`.
+// It doesn't test anything besides the fact that this example compiles.
+CO_TEST(SafeAsyncScope, TwoScopes_Example_From_LifetimeSafety_md) {
+  co_await async_closure(
+      [](auto requiredScope, auto optionalScope) -> ClosureTask<void> {
+        const auto& exec = co_await co_current_executor;
+        requiredScope->with(exec).schedule(doWork(iAmMandatory()));
+        requiredScope->with(exec).schedule(doWork(nonNegotiable()));
+        optionalScope->with(exec).scheduleScopeClosure(
+            doOptionalWork, bigwigInterest());
+        optionalScope->with(exec).scheduleScopeClosure(
+            doOptionalWork, canDoThisLater());
+      },
+      safeAsyncScope<NeverCancel>(), // Match "classic". Or: `CancelViaParent`
+      safeAsyncScope<CancelOnExitOrRequest>());
+}
+
 } // namespace folly::coro
 
 #endif

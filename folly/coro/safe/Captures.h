@@ -206,7 +206,7 @@ class capture_private_t {
   friend class capture_crtp_base;
   template <typename, auto>
   friend class capture_binding_helper;
-  template <bool>
+  template <bool, bool>
   friend auto bind_captures_to_closure(auto, auto&&...);
   friend constexpr capture_private_t coro_safe_detail_bindings_test_private();
   friend class ::folly::coro::AsyncObjectTag;

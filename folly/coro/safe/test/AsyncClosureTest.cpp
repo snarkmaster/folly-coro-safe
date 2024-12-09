@@ -606,4 +606,41 @@ CO_TEST(AsyncClosure, memberTask) {
           as_capture(HasMemberTask{})));
 }
 
+CO_TEST(AsyncClosure, nowClosure) {
+  int m = 37;
+  auto fn = [&]() {
+    return async_now_closure(
+        [](auto n, int& m) -> Task<int> {
+          static_assert(std::is_same_v< // No ref upgrade
+                        after_cleanup_capture<int>,
+                        decltype(n)>);
+          co_return *n + m;
+        },
+        as_capture(1300),
+        m);
+  };
+  EXPECT_EQ(1337, co_await fn());
+}
+
+CO_TEST(AsyncClosure, nowClosureCoCleanup) {
+  std::optional<exception_wrapper> optCleanErr;
+  auto fn = [&]() {
+    return async_now_closure(
+        [](auto cleanup, auto n) -> Task<int> {
+          static_assert(std::is_same_v<
+                        co_cleanup_capture<HasCleanup&>,
+                        decltype(cleanup)>);
+          static_assert(std::is_same_v< // No ref upgrade
+                        after_cleanup_capture<int&>,
+                        decltype(n)>);
+          co_return *n + 37;
+        },
+        as_capture(HasCleanup{&optCleanErr}),
+        as_capture(1300));
+  };
+  EXPECT_FALSE(optCleanErr.has_value());
+  EXPECT_EQ(1337, co_await fn());
+  EXPECT_TRUE(optCleanErr.has_value());
+}
+
 #endif

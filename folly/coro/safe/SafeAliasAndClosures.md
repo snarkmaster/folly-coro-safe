@@ -9,6 +9,8 @@ This doc will help you deeply understand the closure-specific hierarchy of
 `safe_alias` values, and to see how these correspond to `async_closure()`'s
 lifecycle.
 
+XXX Update with `async_now_task`, `LifetimeSafety.md`
+
 ## Demo of reference lifetimes and `async_closure()`
 
 In the slightly contrived example below, we have three nested task invocations.
@@ -86,11 +88,11 @@ either `SafeTask` (for levels >= `shared_cleanup`) or `NowTask`.
     to `async_closure()`, which will proceed to safety-check the arguments, and
     output a `SafeTask` with the correct safety level instead.
 
-  - **`unsafe`** means any detectable aliasing (raw pointer, reference, reference
-    wrapper, etc) not automatically proved to be safe via the `capture` logic, or
-    manually claimed to be safe via `manual_safe_ref`. Today's C++ lacks
-    reflection, so the detection heuristic has limitations -- see `SafeAlias.h`.
-    This level cannot be used with `SafeTask`.
+  - **`unsafe`** means any detectable aliasing (raw pointer, reference,
+    reference wrapper, etc) not automatically proved to be safe via the
+    `capture` logic, or manually claimed to be safe via a `manual_safe_*`
+    wrapper. Today's C++ lacks reflection, so the detection heuristic has
+    limitations -- see `SafeAlias.h`. This level cannot be used with `SafeTask`.
 
 The full execution sequence is:
   - Create capture storage for `A`:

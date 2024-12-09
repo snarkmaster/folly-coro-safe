@@ -8,6 +8,8 @@ You are familiar with `SaferCoro.md`, and you need more complex async patterns, 
   - Some of your objects have require `co_cleanup()` async RAII. You've reviewed
     `CoCleanupAsyncRAII.md`, and understand the caveats.
 
+XXX Update with `async_now_task`, `LifetimeSafety.md`
+
 ## What is an async closure?
 
 Think of `async_closure()` as a `Task<>` coroutine with extra features:
@@ -24,7 +26,9 @@ Think of `async_closure()` as a `Task<>` coroutine with extra features:
       - Returning references (including those in containers or tasks) that will
         have become dangling.
 
-    In practice, safety is limited by the lack-of-reflection caveats at the top of `SafeAlias.h`, and usage of non-safe APIs (`manual_safe_ref`, `Task`, `AsyncScope`, etc). That said, here is what `async_closure()` does to help:
+    In practice, safety is limited by the lack-of-reflection caveats at the top
+    of `SafeAlias.h`, and usage of non-safe APIs (`manual_safe_*`, `Task`,
+    `AsyncScope`, etc). That said, here is what `async_closure()` does to help:
       - Checks `SafeAlias.h` constraints on its inputs. Captures
     & pass-by-reference are forbidden, so `co_invoke` is never needed.
       - Returns a `SafeTask` of the safety level implied by the arguments. Thus,
@@ -37,8 +41,10 @@ Think of `async_closure()` as a `Task<>` coroutine with extra features:
     `co_scope_exit`, memory safety bugs are largely avoided by clearer
     semantics, and `safe_alias_of_v checks.
 
-If you are coming from Python, its `async with` is a close analog of "`async_closure()` + an `as_capture()` argument of a
-`co_cleanup()`-enabled type". The analog of `__aexit__()` is `co_cleanup()`. There is no `__aenter__()` counterpart, since this can be trivially modeled with a wrapper task.
+If you are coming from Python, its `async with` is a close analog of
+"`async_closure()` + an `as_capture()` argument of a `co_cleanup()`-enabled
+type". The analog of `__aexit__()` is `co_cleanup()`. There is no `__aenter__()`
+counterpart, since this can be trivially modeled with a wrapper task.
 
 In exchange for the above safety features, your coroutine cannot be a lambda
 with captures. Instead, pass your data by-value, or use `as_capture()` to pass

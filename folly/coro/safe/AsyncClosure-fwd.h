@@ -21,7 +21,7 @@ namespace folly::coro {
 class AsyncObjectTag;
 
 namespace detail {
-template <bool>
+template <bool, bool>
 auto bind_captures_to_closure(auto, auto&&...);
 } // namespace detail
 
@@ -30,7 +30,7 @@ auto bind_captures_to_closure(auto, auto&&...);
 class async_closure_private_t {
  protected:
   friend class AsyncObjectTag;
-  template <bool>
+  template <bool, bool>
   friend auto detail::bind_captures_to_closure(auto, auto&&...);
 
   async_closure_private_t() = default;

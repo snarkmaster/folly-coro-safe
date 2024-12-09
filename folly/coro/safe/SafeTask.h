@@ -29,6 +29,8 @@
 
 namespace folly::coro {
 
+/// Why is `SafeTask.h` useful? See `SafeTask.md`.
+///
 /// Typically, you will not use `SafeTask` directly.  Instead, choose one of
 /// the type-aliases below, following `APIBestPractices.md` guidance.  Briefly:
 ///   - `ValueTask`: Use if your coro only takes value-semantic args.
@@ -48,12 +50,13 @@ namespace folly::coro {
 ///
 /// `SafeTask` is a thin wrapper around `folly::coro::Task` that uses
 /// `safe_alias_of_v` to enforce some compile-time guarantees:
-///   - The `safe_alias_of_v` memory safety of the coro's arguments
-///     is at least as high as declared.
-///   - Regardless of the declared safety, the coro's return must have
-///     safety `maybe_value` (explained in `SafeTaskRetAndArgs`).
+///   - The `SafeTask` has `safe_alias_of_v` memory safety at least as high
+///     as the coro's arguments.  In particular, no args are taken by
+///     reference.
+///   - Regardless of the task's declared safety, the coro's return must
+///     have safety `maybe_value` (explained in `SafeTaskRetAndArgs`).
 ///   - The coroutine is NOT a stateful callable -- this prohibits lambda
-///     captures, since those a very common cause of coro memory bugs.
+///     captures, since those are a very common cause of coro memory bugs.
 template <safe_alias, typename>
 class SafeTask;
 
@@ -227,7 +230,7 @@ class SafeTaskPromise final : public TaskPromiseWrapper<
   }
 };
 
-template <bool>
+template <bool, bool>
 auto bind_captures_to_closure(auto, auto&&...);
 
 template <safe_alias ArgSafety, typename T>
@@ -318,7 +321,7 @@ class FOLLY_CORO_TASK_ATTRS SafeTask final
   friend struct folly::coro::detail::SafeTaskTest;
   template <safe_alias, typename>
   friend class SafeTask; // `withNewSafety` makes a different `SafeTask`
-  template <bool> // uses `withNewSafety`
+  template <bool, bool> // uses `withNewSafety`
   friend auto detail::bind_captures_to_closure(auto, auto&&...);
 
   // The `async_closure()` implementation is allowed to override the

@@ -377,7 +377,7 @@ constexpr bool capture_needs_outer_coro() {
 // Returns a pair:
 //   - vtag<safe_alias for non-stored args>
 //   - transformed bindings: binding | async_closure_{inner,outer}_stored_arg
-template <bool ForceOuterCoro>
+template <bool ForceOuterCoro, bool ForceSharedCleanup>
 constexpr auto transform_capture_bindings(auto&&... args) {
   auto bind_tup = folly::bindings::ensure_binding_tuple(
       std::forward<decltype(args)>(args)...);
@@ -425,9 +425,17 @@ constexpr auto transform_capture_bindings(auto&&... args) {
   static_assert(
       safe_alias::closure_min_arg_safety == safe_alias::shared_cleanup);
   constexpr binding_helper_cfg binding_cfg{
-      // `unsafe` will be forbidden by `async_closure_safe_coro`
-      .is_shared_cleanup_closure =
-          (safe_alias::shared_cleanup ==
+      // Two possible scenarios:
+      //  - An `async_closure` taking a `SafeTask` and emitting a
+      //    `SafeTask`.  In this case, we'll have `==` iff we got a
+      //    `co_cleanup_capture` ref from a parent.
+      //  - An `async_closure` taking an unconstrained task (may have by-ref
+      //    args, ref captures), and emitting a `NowTask`.  In this case,
+      //    the arg safety doesn't actually matter -- the caller must always
+      //    `ForceSharedCleanup` simply because the lambda callable might be
+      //    capturing a `co_cleanup` ref inside it.
+      .is_shared_cleanup_closure = ForceSharedCleanup ||
+          (safe_alias::shared_cleanup >=
            folly::detail::least_safe_alias( //
                vtag_safety_of_non_stored_args<
                    /*IncludeRefHack*/ true,

@@ -133,7 +133,11 @@ template <
     typename OuterResT = drop_unit_t<decltype(async_closure_outer_coro_result(
         std::declval<async_closure_private_t>(),
         std::declval<lift_unit_t<ResultT>&&>()))>>
-SafeTask<OuterSafety, OuterResT> async_closure_outer_coro(
+std::conditional_t<
+    OuterSafety >= safe_alias::closure_min_arg_safety,
+    SafeTask<OuterSafety, OuterResT>,
+    NowTask<OuterResT>>
+async_closure_outer_coro(
     async_closure_private_t priv,
     auto try_inner,
     auto storage_ptr,
@@ -239,7 +243,7 @@ class async_closure_wrap_coro {
   MakeOuterCoro make_outer_coro_;
 
  protected:
-  template <bool>
+  template <bool, bool>
   friend auto bind_captures_to_closure(auto, auto&&...);
   explicit async_closure_wrap_coro(
       vtag_t<OuterSafety, InnerSafety>, MakeOuterCoro make_outer)
@@ -369,11 +373,13 @@ decltype(auto) async_closure_bind_inner_coro_arg(
 // regular coroutine args are bound eagerly too.  Implementation-wise, all
 // `lang/Bindings.h` logic has to be resolved within the current statement,
 // since the auxiliary reference-bearing objects aren't valid beyond that.
-template <bool ForceOuterCoro>
+template <bool ForceOuterCoro, bool EmitNowTask = false>
 auto bind_captures_to_closure(auto make_inner_coro, auto&&... args) {
-  auto [non_storage_safeties, b_tup] =
-      transform_capture_bindings<ForceOuterCoro>(
-          std::forward<decltype(args)>(args)...);
+  auto [non_storage_safeties, b_tup] = transform_capture_bindings<
+      ForceOuterCoro,
+      // `NowTask`s closures have no safety controls, and thus -- like
+      // "shared cleanup" closures -- don't get to upgrade `capture` refs.
+      /*force shared*/ EmitNowTask>(std::forward<decltype(args)>(args)...);
 
   // If some arguments require outer-coro storage, construct them in-place
   // on a `unique_ptr<tuple<>>`.  Without an outer coro, this stores `nullopt`.
@@ -452,12 +458,23 @@ auto bind_captures_to_closure(auto make_inner_coro, auto&&... args) {
       },
       b_tup);
 
-  constexpr safe_alias OuterSafety =
-      folly::detail::least_safe_alias(decltype(non_storage_safeties){});
-  constexpr safe_alias InnerSafety =
-      safe_task_traits<decltype(inner_coro)>::arg_safety;
+  constexpr safe_alias OuterSafety = EmitNowTask
+      ? safe_alias::unsafe
+      : folly::detail::least_safe_alias(decltype(non_storage_safeties){});
+  constexpr safe_alias InnerSafety = [&]() {
+    if constexpr (EmitNowTask) {
+      return safe_alias::unsafe;
+    } else {
+      return safe_task_traits<decltype(inner_coro)>::arg_safety;
+    }
+  }();
+
   // `ClosureTask` & `MemberTask` are non-movable, so we must unwrap them
   // before moving them into the `make_outer_coro` lambda below.
+  //
+  // Future: If required, this can be updated to handle `inner_coro` being a
+  // `NowTask` when `EmitNowTask` is set.  This isn't done since it would
+  // complicate the code for a marginally useful feature.
   auto inner_rewrapped = [&] {
     if constexpr (InnerSafety >= safe_alias::unsafe_closure_internal) {
       // We clip to `min_arg_safety` only to enable a `checkIsUnsafe`
@@ -473,42 +490,49 @@ auto bind_captures_to_closure(auto make_inner_coro, auto&&... args) {
       // safety based only on the non-storage arguments.
       return std::move(inner_coro).template withNewSafety<newSafety>();
     } else {
-      // This is a `SafeTask`, `release_outer_coro()` will fail.
+      // With `EmitNowTask == true`, this is a `Task` we `toNowTask` below.
+      // Otherwise, this is a `SafeTask`, `release_outer_coro()` will fail.
       // Tests covering this: `checkIsUnsafe` and `nonSafeTaskIsNotAwaited`
       return std::move(inner_coro);
     }
   }();
-  return async_closure_wrap_coro{
-      vtag<OuterSafety, InnerSafety>,
-      [tup_ptr = std::move(storage_ptr),
-       inner = std::move(inner_rewrapped)]() mutable {
-        using ResultT = semi_await_result_t<decltype(inner)>;
-        // We require this calling convention because the `isInvokeMember`
-        // branch above dereferences the 1st arg.  That is only sensible if
-        // we KNOW that the arg is the implicit object parameter, which
-        // would not be true e.g.  if the user passed something like this:
-        //   [](int num, auto me) { return me->addNumber(num); }
-        static_assert(
-            std::is_same_v<MemberTask<ResultT>, decltype(inner_coro)> ==
-                isInvokeMember,
-            "To use `MemberTask<>` coros with `async_closure()`, you must pass "
-            "callable as `FOLLY_INVOKE_MEMBER(memberName)`, and pass the "
-            "instance's `capture`/`AsyncObjectPtr`/... as the first argument.");
-        if constexpr (std::is_same_v<decltype(tup_ptr), std::nullopt_t>) {
-          // No outer coro is needed, so we can return the inner one.
-          static_assert(
-              !has_result_after_cleanup<ResultT>,
-              "Cannot `co_return *after_cleanup()` without a cleanup arg");
-          return std::move(inner);
-          (void)tup_ptr;
-        } else {
-          return async_closure_make_outer_coro<
-              /*cancelTok*/ true,
-              ResultT,
-              OuterSafety>(
-              async_closure_private_t{}, std::move(inner), std::move(tup_ptr));
-        }
-      }};
+
+  auto make_outer_coro = [tup_ptr = std::move(storage_ptr),
+                          inner = std::move(inner_rewrapped)]() mutable {
+    using ResultT = semi_await_result_t<decltype(inner)>;
+    // We require this calling convention because the `isInvokeMember`
+    // branch above dereferences the 1st arg.  That is only sensible if
+    // we KNOW that the arg is the implicit object parameter, which
+    // would not be true e.g.  if the user passed something like this:
+    //   [](int num, auto me) { return me->addNumber(num); }
+    static_assert(
+        std::is_same_v<MemberTask<ResultT>, decltype(inner_coro)> ==
+            isInvokeMember,
+        "To use `MemberTask<>` coros with `async_closure()`, you must pass "
+        "callable as `FOLLY_INVOKE_MEMBER(memberName)`, and pass the "
+        "instance's `capture`/`AsyncObjectPtr`/... as the first argument.");
+    if constexpr (std::is_same_v<decltype(tup_ptr), std::nullopt_t>) {
+      // No outer coro is needed, so we can return the inner one.
+      static_assert(
+          !has_result_after_cleanup<ResultT>,
+          "Cannot `co_return *after_cleanup()` without a cleanup arg");
+      return std::move(inner);
+      (void)tup_ptr;
+    } else {
+      return async_closure_make_outer_coro<
+          /*cancelTok*/ true,
+          ResultT,
+          OuterSafety>(
+          async_closure_private_t{}, std::move(inner), std::move(tup_ptr));
+    }
+  };
+
+  if constexpr (EmitNowTask) {
+    return toNowTask(make_outer_coro());
+  } else {
+    return async_closure_wrap_coro{
+        vtag<OuterSafety, InnerSafety>, std::move(make_outer_coro)};
+  }
 }
 
 } // namespace folly::coro::detail

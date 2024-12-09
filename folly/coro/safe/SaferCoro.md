@@ -8,16 +8,18 @@ https://ericniebler.com/2020/11/08/structured-concurrency/) paradigm.
 You are especially encouraged to read this if you require tasks that are
 **not** immediately awaited, such as deferred or background tasks.
 
-This document is meant to be the entry point to the APIs and programming
-model of `folly/coro/safe`.  It assumes familiarity with `coro/README.md`,
-with structured concurrency, and awareness (but not expert knowledge) of
-these `folly::coro` constructs:
+This document is meant to be the entry point to the APIs and programming model
+of the C++20 library in `folly/coro/safe`.  It assumes familiarity with
+`coro/README.md`, with structured concurrency, and awareness (but not expert
+knowledge) of these `folly::coro` constructs:
   - `Task` -- a lazy-start coroutine representing async work,
   - `AsyncScope` -- a collection of background `Task`s or other awaitables.
 
 You may ignore references to edge-case tools like `co_invoke` or
 `co_scope_exit` -- these are mentioned by way of comparison, but this
 document argues you should avoid them in favor of `coro/safe` APIs.
+
+XXX Update with `async_now_task`, `LifetimeSafety.md`
 
 ## Problems solved (and not solved)
 
@@ -27,7 +29,8 @@ some new risks relating to multi-threading, e.g.
   - Deadlock due to a blocking wait on a thread that must suspend in order
     to complete the awaited task (e.g. blocking wait in a destructor).
 
-To enforce pure structured concurrency in your code, `folly/coro/safe` encourages you to replace `Task` with these zero-cost wrappers:
+To enforce pure structured concurrency in your code, `folly/coro/safe`
+encourages you to replace `Task` with these zero-cost wrappers:
   - `NowTask`: non-movable, only awaitable in the statement that made it, or
   - `ValueTask`: task is self-contained, contains no references to external data.
 
@@ -62,7 +65,7 @@ member coro, you will see that `coro/safe` offers more robust solutions.
 ### Compile-time memory safety
 
 When you use `coro/safe` constructs, you end up telling the compiler -- through
-the type system -- a fairly precise lifetime contract for the objects you are
+the type system -- a specific lifetime contract for the objects you are
 referencing (details in `SafeAlias.h` and `Captures.h`).  As a result, many
 common lifetime bugs become compiler errors.  Briefly, when you intact with
 "safe" tasks like `async_closure` and friends:
@@ -73,16 +76,19 @@ common lifetime bugs become compiler errors.  Briefly, when you intact with
     reference types, and support the common cvref categories.  The wrapper
     "commutes" with taking references or adding `const`.  All `capture`
     classes expose the underlying type via a pointer-like interface, and
-    only `capture_nullable` is nullable.
+    only `capture_indirect` is nullable.
   - `AsyncObject`s are typically owned via `AsyncObjectPtr`, which resembles
     `co_cleanup_capture`, but with nullability, and necessarily weaker
     lifetime safety.
-  - You may never pass (without `manual_safe_ref*`, below) references,
-    pointers, reference wrappers, and anything containing them.  Caveat: Due
-    to C++ limitations, we only introspect a few `std::` containers, and
-    cannot detect aliasing within generic classes.
+  - Safe tasks / closures never take arguments that are references, pointers,
+    reference wrappers, and anything containing them (without the
+    `manual_safe_*` escape hatch, below).  Caveat: Due to C++ limitations, we
+    only introspect a few `std::` containers, and cannot detect aliasing within
+    generic classes. `FutureLinters.md` could help here.
   - If the type heuristics are too limiting, but you can prove your usage is
-    safe, wrap a value in `manual_safe_ref*` for a simple escape hatch.
+    safe, put your argument in a `manual_safe_*` wrapper for a simple escape
+    hatch.
+
     **Always** add a comment explaining why it's safe!
 
 ### Async RAII
@@ -134,9 +140,9 @@ helps, but its API is clumsy and encourages memory-safety bugs.
 All the familiar `folly::coro` concepts will continue to apply, but a few
 things need to be expressed differently.
 
-  * `Task` -> `ClosureTask`, `MemberTask`, `ValueTask`, `CoCleanupSafeTask`,
-    `AutoSafeTask`, `NowTask`.  Yes, this is a mouthful, and you will want
-    to review `APIBestPractices.md` to understand the various use-cases.
+  * `Task` -> `NowTask`, `ClosureTask`, `MemberTask`, `ValueTask`,
+    `CoCleanupSafeTask`, `AutoSafeTask`.  Yes, this is a mouthful, and you will
+    want to review `APIBestPractices.md` to understand the various use-cases.
     However, basic usage is simple:
       - Immediately awaited tasks: `NowTask`
       - Tasks taking only value-semantic args: `ValueTask`
@@ -192,3 +198,21 @@ As a result, identifiers in domains that were "more like camelcase libraries" st
 The original author is personally not a fan of this confusing state, and would welcome encouragement to either:
   - Standardize all APIs on the more prevalent `camelCase`, or
   - Introduce a *very* obvious guideline for which style applies when.
+
+## Relation to C++ working group proposals
+
+For a thorough discussion of related work, see `RelationToWGProposals.md`.
+
+`folly/coro/safe` is a library, not a language change. In recent years, bright
+people in the C++ language working groups have proposed language-centric
+approaches towards async RAII ([P1662R0](https://wg21.link/p1662r0) etc) &
+lifetime safety ([P1179R1](https://wg21.link/p1179r1) etc), and so ... this
+library ideally wouldn't exist! For now, it serves to paper over gaps in
+language facilities.
+
+To the author's knowledge, as of 2024 this is the closest to a "production"
+integration of these two ideas together with a mature C++ async runtime
+(`folly::coro`). Since the timeframe for the relevant language changes sounds
+like "2029 at best", the library approach will remain relevant for a few more
+years. Think of `folly/coro/safe` as a bridge to a cleaner, language-native
+future.

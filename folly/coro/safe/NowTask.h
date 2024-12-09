@@ -67,8 +67,27 @@ struct FOLLY_CORO_TASK_ATTRS NowTask final
     : public TaskWrapperCrtp<NowTask<T>, T, Task<T>>,
       private NonCopyableNonMovable {
   using promise_type = detail::NowTaskPromise<T>;
+
+ protected:
   using TaskWrapperCrtp<NowTask<T>, T, Task<T>>::TaskWrapperCrtp;
+  template <typename U>
+  friend auto toNowTask(Task<U> t);
+  template <typename U>
+  friend auto toNowTask(NowTask<U> t);
 };
+
+// For now this just supports conversions from `Task`, on the theory that
+// it's odd to want to downgrade a safe inner coro to a `NowTask`.  If
+// there's a case for supporting `SafeTask`, then unlike `NowTask`,
+// `SafeTask` can even safely have a public `unwrap()`.
+template <typename T>
+auto toNowTask(Task<T> t) {
+  return NowTask<T>{std::move(t)};
+}
+template <typename T>
+auto toNowTask(NowTask<T> t) {
+  return NowTask<T>{std::move(t).unwrap()};
+}
 
 } // namespace folly::coro
 

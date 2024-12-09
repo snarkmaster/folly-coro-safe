@@ -49,7 +49,9 @@ TEST(BindingsTest, all_tests_run_at_build_time) {}
 
 constexpr bool check_empty() {
   static_assert(std::is_same_v<
-                decltype(transform_capture_bindings</*force outer*/ false>()),
+                decltype(transform_capture_bindings<
+                         /*force outer*/ false,
+                         /*force shared cleanup*/ false>()),
                 std::pair<vtag_t<>, std::tuple<>>>);
   return true;
 }
@@ -61,7 +63,9 @@ template <
     safe_alias ExpectedSafety = safe_alias::maybe_value>
 constexpr void check_one_no_shared_cleanup(auto&& arg) {
   static_assert(std::is_same_v<
-                decltype(transform_capture_bindings</*force outer*/ false>(
+                decltype(transform_capture_bindings<
+                         /*force outer*/ false,
+                         /*force shared cleanup*/ false>(
                     std::forward<decltype(arg)>(arg))),
                 std::pair<vtag_t<ExpectedSafety>, std::tuple<ExpectedT>>>);
 }
@@ -76,7 +80,9 @@ template <
     safe_alias ExpectedSafety = safe_alias::maybe_value>
 constexpr void check_one_shared_cleanup(auto&& arg) {
   static_assert(std::is_same_v<
-                decltype(transform_capture_bindings</*force outer*/ false>(
+                decltype(transform_capture_bindings<
+                         /*force outer*/ false,
+                         /*force shared cleanup*/ false>(
                     std::forward<decltype(arg)>(arg),
                     std::declval<co_cleanup_capture<HasCleanup&>&>())),
                 std::pair<
@@ -247,7 +253,7 @@ constexpr bool check_capture_lref_to_rref() {
     auto lbind_cleanup = bind_one(cleanup);
     co_cleanup_capture<HasCleanup&> ar{priv, std::move(lbind_cleanup)};
 #if 0
-    transform_capture_bindings</*force outer*/ false>(std::move(ar));
+    transform_capture_bindings</*force outer*/ false, /*force shared cleanup*/ false>(std::move(ar));
 #endif
   }
 
@@ -286,7 +292,24 @@ constexpr bool check_capture_rref_to_rref() {
 
 static_assert(check_capture_rref_to_rref());
 
+constexpr bool check_force_no_shared_cleanup() {
+  int x = 7;
+  auto lbind = bind_one(x);
+  after_cleanup_capture<int&> cr{priv, std::move(lbind)};
+  static_assert(std::is_same_v<
+                decltype(transform_capture_bindings<
+                         /*force outer*/ false,
+                         /*force shared cleanup*/ true>(cr)),
+                std::pair<
+                    vtag_t<safe_alias::after_cleanup_ref>,
+                    std::tuple<after_cleanup_capture<int&>>>>);
+  return true;
+}
+
+static_assert(check_force_no_shared_cleanup());
+
 // XXX check_stored* -- including "force outer coro" set to true & false
+//     Also add a stored arg to check_force_no_shared_cleanup
 
 // XXX check "`guess_binding_cfg` matched reality" vs "not" branches
 

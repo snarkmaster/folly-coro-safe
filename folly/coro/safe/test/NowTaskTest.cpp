@@ -26,18 +26,18 @@ NowTask<int> leetTask(int x) {
   co_return 1300 + x;
 }
 
-CO_TEST(TaskWrapper, trivial) {
+CO_TEST(NowTaskTest, trivial) {
   EXPECT_EQ(1337, co_await leetTask(37));
 }
 
 // Both of these are antipatterns with `Task` because if you awaited either
 // of these coros outside of the statement that created them, it would have
 // dangling refs.
-CO_TEST(TaskWrapper, passByRef) {
+CO_TEST(NowTaskTest, passByRef) {
   auto res = co_await [](int&& x) -> NowTask<int> { co_return 1300 + x; }(37);
   EXPECT_EQ(1337, res);
 }
-CO_TEST(TaskWrapper, lambdaWithCaptures) {
+CO_TEST(NowTaskTest, lambdaWithCaptures) {
   int a = 1300, b = 37;
   auto res = co_await [&a, b]() -> NowTask<int> { co_return a + b; }();
   EXPECT_EQ(1337, res);
@@ -51,7 +51,7 @@ template <typename T>
 concept InvocableWithMovedArg =
     requires(T t) { invokeAndBlockingWait(std::move(t)); };
 
-CO_TEST(TaskWrapper, cannotDelayAwait) {
+CO_TEST(NowTaskTest, cannotDelayAwait) {
   // Since C++17, calling this with a prvalue doesn't involve a move
   // constructor, so there's no violation of the `NowTask` guarantee.
   static_assert(requires { invokeAndBlockingWait(leetTask(37)); });
@@ -66,6 +66,14 @@ CO_TEST(TaskWrapper, cannotDelayAwait) {
           std::remove_reference_t<decltype(t)>>);
   static_assert(!InvocableWithMovedArg<decltype(t)>);
   co_return;
+}
+
+CO_TEST(NowTaskTest, toNowTask) {
+  static_assert(std::is_same_v<NowTask<int>, decltype(toNowTask(leetTask(5)))>);
+  auto t = []() -> Task<int> { co_return 5; }();
+  static_assert(
+      std::is_same_v<NowTask<int>, decltype(toNowTask(std::move(t)))>);
+  EXPECT_EQ(5, co_await toNowTask(std::move(t)));
 }
 
 } // namespace folly::coro

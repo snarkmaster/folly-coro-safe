@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <folly/ConstexprMath.h>
 #include <folly/Traits.h>
 
 #include <type_traits>
@@ -165,22 +166,9 @@ inline constexpr safe_alias safe_alias_of_v =
 
 namespace detail {
 
-template <auto FirstV, auto... Vs>
-constexpr auto vtag_min(vtag_t<FirstV, Vs...>) {
-  auto min_v = FirstV;
-  (
-      [&]() {
-        if (Vs < min_v) {
-          min_v = Vs;
-        }
-      }(),
-      ...);
-  return min_v;
-}
-
 template <safe_alias... Vs>
 constexpr safe_alias least_safe_alias(vtag_t<Vs...>) {
-  return vtag_min(vtag<safe_alias::maybe_value, Vs...>);
+  return folly::constexpr_min(safe_alias::maybe_value, Vs...);
 }
 
 // Helper: Inspects its own template args for aliasing.
@@ -243,11 +231,11 @@ struct manual_safe_val_t {
 };
 
 template <safe_alias Safety = safe_alias::maybe_value, typename T = void>
-inline auto manual_safe_ref(T& t) {
+auto manual_safe_ref(T& t) {
   return manual_safe_ref_t<Safety, T>{t};
 }
 template <safe_alias Safety = safe_alias::maybe_value>
-inline auto manual_safe_val(auto t) {
+auto manual_safe_val(auto t) {
   return manual_safe_val_t<Safety, decltype(t)>{std::move(t)};
 }
 

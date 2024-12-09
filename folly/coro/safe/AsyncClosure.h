@@ -56,7 +56,7 @@ Control flow is what you'd expect from a regular coro:
 /// (1) If `make_inner_coro` returns `NowTask`, the closure is `NowTask`.
 /// (2) There's a separate API, like `async_now_closure()`.
 constexpr auto async_closure(auto make_inner_coro, auto&&... args) {
-  return detail::bind_captures_to_closure</*force outer coro*/ false>(
+  return detail::bind_captures_to_closure</*ForceOuterCoro*/ false>(
              std::move(make_inner_coro), std::forward<decltype(args)>(args)...)
       .release_outer_coro();
 }
@@ -90,17 +90,40 @@ constexpr auto as_async_closure(Fn) {
   };
 }
 
-/// A variant of `async_closure() to help reduce heap allocations when
-/// passing many in-place args.  Currently (this may change!), if none of an
-/// `async_closure`'s arguments provide `co_cleanup(async_closure_private_t)`,
-/// it will pass each individual `make_in_place` arg on-heap.  If you're in
-/// an edge case where "allocating an outer coro + unique_ptr<tuple<...async
-/// args...>" sounds cheaper than "allocating many in-place args on-heap",
-/// try passing this argument.  If it's needed often, we may provide this
-/// behavior as a heuristic.
+// Like `async_closure()` -- same argument binding semantics, same
+// `co_cleanup`, and cancellation support, but returns a non-movable
+// `NowTask` without the lifetime safety enforcement:
+//   - `make_inner_coro` should make a plain `Task`
+//   - It can take arguments by ref, you can pass raw pointers, etc.
+//   - There are no checks on the `co_return` type either.
+//
+// Requiring the task to be immediately awaited prevents a lot of common
+// lifetime bugs.  If you can't immediately await the task, then you should
+// really review `LifetimSafetyBeneifts.md` and use the `SafeTask`-enabled
+// `async_closure`, which is movable and schedulable on `SafeAsyncScope`.
+//
+// BEWARE: Returning `NowTask` doesn't prevent egregious bugs like returning
+// a pointer to a local.  Instead, make sure to configure your compiler to
+// error on simple, non-async lifetime bugs (e.g. `-Wdangling -Werror`).
+constexpr auto async_now_closure(auto make_inner_coro, auto&&... args) {
+  return detail::bind_captures_to_closure<
+      /*ForceOuterCoro*/ false,
+      /*EmitNowTask*/ true>(
+      std::move(make_inner_coro), std::forward<decltype(args)>(args)...);
+}
+
+/// POWER USERS ONLY: A variant of `async_closure()` to help reduce heap
+/// allocations when passing many in-place args.  Currently (this may
+/// change!), if none of an `async_closure`'s arguments provide
+/// `co_cleanup(async_closure_private_t)`, it will pass each individual
+/// `make_in_place` arg on-heap.  If you're in an edge case where
+/// "allocating an outer coro + unique_ptr<tuple<...async args...>" sounds
+/// cheaper than "allocating many in-place args on-heap", try passing this
+/// argument.  If this is needed often, we may provide this behavior as a
+/// heuristic.
 constexpr auto async_closure_force_outer_coro(
     auto make_inner_coro, auto&&... args) {
-  return detail::bind_captures_to_closure</*force outer coro*/ true>(
+  return detail::bind_captures_to_closure</*ForceOuterCoro*/ true>(
              std::move(make_inner_coro), std::forward<decltype(args)>(args)...)
       .release_outer_coro();
 }

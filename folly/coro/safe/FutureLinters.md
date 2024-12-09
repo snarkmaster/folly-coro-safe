@@ -42,9 +42,13 @@ A couple of "standard modern C++ linters" are assumed to be active:
     (passed as an arg, or otherwise contains external references),
     require the args to that callable to have `maybe_value` safety.
 
-  - (mid-pri, easy) It should not be common that `capture`s are moved.
-    However, when it is necessary, use `*std::move(arg)` (good) instead of
-    `std::move(*arg)` (bad).  The former benefits from use-after-move
+  - (mid-pri, easy) Detect when a `capture<Val>` wrapper is being moved outside
+    of the current coro, and raise a blocking lint error. Moving the wrapper
+    would breaks a core safety invariant, see `LifetimeSafetyDesign.md`.
+
+  - (mid-pri, easy) It should not be common that values contained in `capture`s
+    are moved. However, when it is necessary, use `*std::move(arg)` (good)
+    instead of `std::move(*arg)` (bad).  The former benefits from use-after-move
     linting, and (potentially) future runtime checks.
 
 ### `AsyncObject`

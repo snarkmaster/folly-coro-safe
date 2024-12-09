@@ -47,26 +47,25 @@ co_await async_closure([](auto scope, auto n) -> ClosureTask<void> {
   scope.with(exec).schedule([](auto n) -> BgTask { n->fetch_add(100); });
   scope.with(exec).schedule([](auto n) -> BgTask { n->fetch_add(20); });
   scope.with(exec).schedule([](auto n) -> BgTask { n->fetch_add(3); });
-}, safeAsyncScope<CancelViaParent>, by_ref(n));
+}, safeAsyncScope<CancelViaParent>, capture_ref(n));
 assert(123 == n.load());
 ```
 
-The only new functionality above is that `by_ref(n)` is now allowed in
-`async_closure()` args (note -- it's already supported by `folly::binding`),
-with the following effects:
+The only new functionality above is that `capture_ref(n)` is now allowed in
+`async_closure()` args, with the following effects:
   - Following normal `async_closure()` reference upgrade rules, the child
     closure gets a `capture<std::atomic_int&>`, or `&&` with
-    `by_ref(std::move())`, or a `after_cleanup_capture` if it also has a
+    `capture_ref(std::move())`, or a `after_cleanup_capture` if it also has a
     `shared_cleanup` arg.
   - There are two options for the safety of the resulting `async_closure()`:
     * Conservatively, it could just be `NowTask` and the references would be
       guaranteed valid.
     * For more user flexibility, it would be within the spirit of regular RAII
       to defer awaiting the closure to a later point in the current scope. That
-      is, the `SafeTask` taking these `by_ref()` args would be marked down to
-      `<= body_only_ref` safety. This is a new safety level with:
+      is, the `SafeTask` taking these `capture_ref()` args would be marked down
+      to `<= lexical_scope_ref` safety. This is a new safety level with:
       ```cpp
-      after_cleanup_ref >= body_only_ref >= shared_cleanup
+      after_cleanup_ref >= lexical_scope_ref >= shared_cleanup
       ```
       In practice today, there's little difference from `after_cleanup_ref`,
       since `move_after_cleanup` won't take a `SafeTask` anyway. However,
@@ -74,42 +73,48 @@ with the following effects:
       shorter -- it expires whenever the captured refs expire, which (under
       typical RAII) is a bit longer than the lexical lifetime of the task. In
       this scenario, the user can, of course, invalidate the reference before
-      awaiting the task, but it takes a bit of effort. For example:
+      awaiting the task, but it takes a bit of effort, and should be covered if
+      the [P1179R1 lifetime safety profile](https://wg21.link/P1179R1) is
+      standardized. For example:
       ```cpp
-      std::optional<SafeTask<safe_alias::body_only_ref, void>> t;
+      std::optional<SafeTask<safe_alias::lexical_scope_ref, void>> t;
       {
         int i = 5;
         t = async_closure([](auto i) -> ClosureTask<void> {
           std::cout << *i << std::endl;
           co_return;
-        }, by_ref(i));
+        }, capture_ref(i));
         ++i;
       }
       // BAD: The reference to `i` is now invalid!
       co_await std::move(*t);
       ```
 
-*Aside*: The way that `async_closure(..., by_ref(...))` acts, it seems like we
-could just universally allow creating `body_only_capture<T&>` from `T&`.
-`Captures.h` would need to support auto-upgrade of `body_only_capture` to
-`capture` or `after_cleanup_capture`, depending on `shared_cleanup` status. This
-"universal" implementation would be more complex, and I would start by only
-building the above special case of `async_closure(..., by_ref(...))`. The
+*Note 1*: Initially, I wanted to hijack `folly::bindings::by_ref` instead of
+`folly::coro::capture_ref` as the verb above, but realized this would cause
+users to want to type `argName.` instead of `argName->`.
+
+*Note 2*: The way that `async_closure(..., capture_ref(...))` acts, it seems
+like we could just universally allow creating `lexical_scope_capture<T&>` from
+`T&`. `Captures.h` would need to support auto-upgrade of `lexical_scope_capture`
+to `capture` or `after_cleanup_capture`, depending on `shared_cleanup` status.
+This "universal" implementation would be more complex, and I would start by only
+building the above special case of `async_closure(..., capture_ref(...))`. The
 reasons is that, without `async_closure()`'s capture-upgrade semantics, there's
-not a lot of value in having a `body_only_capture<>` ref -- you can't use it to
-schedule work on a nested `SafeAsyncScope`. Whereas for immediately-awaited
+not a lot of value in having a `lexical_scope_capture<Ref>` -- you can't use it
+to schedule work on a nested `SafeAsyncScope`. Whereas for immediately-awaited
 tasks, `NowTask` + pass-by-reference is much simpler.
 
 ### *(lo-pri)* `co_cleanup_capture<>` from `AsyncObjectPtr<>`
 
 Before considering this item, first implement the preceding "create `capture<>`s
-via `by_ref()`" idea. That enables passing `by_ref(*objPtr)` into a sub-closure,
-which is most of what you need.
+via `capture_ref()`" idea. That enables passing `capture_ref(*objPtr)` into a
+sub-closure, which is most of what you need.
 
 The utility of giving the sub-closure a `capture` is that `AsyncObjectPtr<>` is
 move-only, whereas `capture` lets you pass references into further descendants.
 
-In some scenarios, the `by_ref()` solution may be less convenient, since it
+In some scenarios, the `capture_ref()` solution may be less convenient, since it
 requires you to independently keep the object alive.
 
 Today, you can do this kludge to move the `AsyncObjectPtr` into the closure
@@ -117,7 +122,7 @@ Today, you can do this kludge to move the `AsyncObjectPtr` into the closure
 
 ```cpp
 auto& rawObj = *objPtr;
-co_await async_closure(..., by_ref(rawObj), std::move(objPtr));
+co_await async_closure(..., capture_ref(rawObj), std::move(objPtr));
 ```
 
 The better fix would be to special-case moving `AsyncObjectPtr` into a closure,
@@ -131,6 +136,44 @@ subject to 2 requirements:
   - The inner task of the closure gets a `co_cleanup_capture<Obj&>`. *Future*:
     There might be a case for providing a nullable reference kind, too, but it's
     hard to justify that extra vocabulary when the kludge above kind of works.
+
+### *(easy)* TBD: Allow by-value `this` variables?
+
+In `LifetimeSafetyBenefits.md`, this example comes up:
+
+```cpp
+tasks.push_back(async_closure(
+    FOLLY_INVOKE_MEMBER(bar), as_capture(Foo{index})));
+```
+
+At first glance, it looks like we could elide the `as_capture` for `this`:
+
+```cpp
+tasks.push_back(async_closure(FOLLY_INVOKE_MEMBER(bar), Foo{index}));
+```
+
+Are there any bad second-order consequences, or should we make this simple
+improvement, and update the other guide?
+
+### `co_await co_cleanup_capture_of_owner`
+
+Check out the `LifetimeSafetyBenefits.md` discussion titled "Should we add
+`scheduleUnsafe()` after all?". That benefits from a more generic approach to
+recursive scheduling of background tasks:
+  - A new `CoCleanupOwnedTask` type that stores a ref to its `co_cleanup` owner.
+    Owners are expected to implement async-scope-like lifetime semantics: the
+    reference is valid while the task is alive.
+  - This task can get a `co_cleanup_capture<>` wrapper via
+
+    ```cpp
+    auto owner = co_await co_cleanup_capture_of_owner;
+    ```
+  - `SafeAsyncScope`'s scheduling primitives are updated with a protocol to set
+    the owner.
+
+This would largely supersede the `scheduleScopeClosure` / `scheduleSelfClosure`
+APIs, but would not replace `CoCleanupSafeTask`, which -- being lighter -- would
+remain the task of choice for non-recursively-scheduling tasks.
 
 ### `co_setup` support
 
